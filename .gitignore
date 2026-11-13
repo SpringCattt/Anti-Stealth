@@ -1,0 +1,6 @@
+# Godot
+editor_mapa/.godot/
+*.uid
+
+# Training output
+simulador/pruebas/*.log

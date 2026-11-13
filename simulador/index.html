@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anti-Stealth v2.1</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
+  #escena { position: absolute; inset: 0; }
+  #hud { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 32px); color: #eee; font: 12px/1.4 monospace; white-space: pre-wrap; background: #000a; padding: 6px 8px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="escena"></div>
+<div id="hud">Cargando...</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<!-- ../mapa_casa.js: el mapa (se edita en editor_mapa con Godot o se regenera con herramientas/generar_casa.js) -->
+<script src="../mapa_casa.js"></script>
+<!-- Lógica (sin DOM; mismo orden que pruebas/cargar.js) -->
+<script src="config.js"></script>
+<script src="red.js"></script>
+<script src="genes.js"></script>
+<script src="raycast.js"></script>
+<script src="astar.js"></script>
+<script src="pizarra.js"></script>
+<script src="agente.js"></script>
+<script src="guardian.js"></script>
+<script src="infiltrador.js"></script>
+<script src="gadgets.js"></script>
+<script src="fitness.js"></script>
+<script src="nucleo.js"></script>
+<!-- Navegador (render.js solo lee el estado del motor) -->
+<script src="render.js"></script>
+<script src="principal.js"></script>
+</body>
+</html>
