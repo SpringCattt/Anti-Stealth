@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,11 +8,18 @@
   html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
   #escena { position: absolute; inset: 0; }
   #hud { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 32px); color: #eee; font: 12px/1.4 monospace; white-space: pre-wrap; background: #000a; padding: 6px 8px; pointer-events: none; }
+  #fin { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 32px); box-sizing: border-box;
+         color: #eee; font: 15px/1.6 monospace; text-align: center; background: #000d; border: 1px solid #555; border-radius: 8px; padding: 20px 28px; pointer-events: none; }
+  #fin h1 { margin: 0 0 10px; font-size: 24px; }
+  #fin .infiltradores { color: #5fa8ec; }
+  #fin .guardianes { color: #f0a050; }
+  #fin .tecla { margin-top: 12px; color: #aaa; }
 </style>
 </head>
 <body>
 <div id="escena"></div>
-<div id="hud">Cargando...</div>
+<div id="hud">Loading...</div>
+<div id="fin" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <!-- ../mapa_casa.js: el mapa (se edita en editor_mapa con Godot o se regenera con herramientas/generar_casa.js) -->
 <script src="../mapa_casa.js"></script>
