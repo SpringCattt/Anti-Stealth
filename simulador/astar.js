@@ -42,11 +42,33 @@ function heapPop(hf, hc) {
   return c;
 }
 
+// Distancia a pie (mismas reglas que buscarRuta, sin coste extra) desde la casilla inicio a todas: Float64Array con
+// Infinity donde no se llega. Es un Dijkstra (A* sin meta).
+function distanciasDesde(mapa, inicio) {
+  const ancho = mapa.ancho, alto = mapa.alto, alt = mapa.altura, SUELO = ALTURA.SUELO, d = new Float64Array(ancho * alto).fill(Infinity);
+  const hf = [], hc = [];
+  d[inicio] = 0;
+  heapPush(hf, hc, 0, inicio);
+  while (hf.length) {
+    const f = hf[0], actual = heapPop(hf, hc);
+    if (f > d[actual]) continue; // entrada antigua
+    const x = actual % ancho, y = (actual - x) / ancho;
+    for (let k = 0; k < 8; k++) {
+      const v = VECINOS[k], dx = v[0], dy = v[1], nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= ancho || ny >= alto || alt[nx + ny * ancho] !== SUELO) continue;
+      if (dx && dy && (alt[nx + y * ancho] !== SUELO || alt[x + ny * ancho] !== SUELO)) continue;
+      const nd = f + v[2], vecino = nx + ny * ancho;
+      if (nd < d[vecino]) { d[vecino] = nd; heapPush(hf, hc, nd, vecino); }
+    }
+  }
+  return d;
+}
+
 // inicio y meta: índices de casilla. extra: Float32Array/Float64Array del tamaño del mapa, o null.
 // Devuelve las casillas desde la siguiente al inicio hasta la meta (incluida), [] si inicio = meta, o null si no hay ruta.
 // Los arrays de trabajo se guardan en mapa.astar y se reutilizan entre búsquedas (marcados por número de búsqueda).
 function buscarRuta(mapa, inicio, meta, extra = null) {
-  const ancho = mapa.ancho, n = ancho * mapa.alto;
+  const ancho = mapa.ancho, alto = mapa.alto, n = ancho * alto, alt = mapa.altura, SUELO = ALTURA.SUELO;
   const sx = inicio % ancho, sy = (inicio - sx) / ancho, mx = meta % ancho, my = (meta - mx) / ancho;
   if (!transitable(mapa, sx, sy) || !transitable(mapa, mx, my)) return null;
   if (inicio === meta) return [];
@@ -66,10 +88,12 @@ function buscarRuta(mapa, inicio, meta, extra = null) {
     }
     T.cerrada[actual] = id;
     const x = actual % ancho, y = (actual - x) / ancho;
-    for (const [dx, dy, distancia] of VECINOS) {
-      const nx = x + dx, ny = y + dy;
-      if (!transitable(mapa, nx, ny)) continue;
-      if (dx && dy && !(transitable(mapa, x + dx, y) && transitable(mapa, x, y + dy))) continue;
+    // Lo mismo que transitable() pero en línea (es el bucle más caliente de la simulación). Si (nx, ny) está dentro,
+    // las dos ortogonales de una diagonal también lo están.
+    for (let k = 0; k < 8; k++) {
+      const v = VECINOS[k], dx = v[0], dy = v[1], distancia = v[2], nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= ancho || ny >= alto || alt[nx + ny * ancho] !== SUELO) continue;
+      if (dx && dy && (alt[nx + y * ancho] !== SUELO || alt[x + ny * ancho] !== SUELO)) continue;
       const vecino = nx + ny * ancho;
       if (T.cerrada[vecino] === id) continue;
       const nuevoG = T.g[actual] + distancia * (1 + (extra ? extra[vecino] : 0));

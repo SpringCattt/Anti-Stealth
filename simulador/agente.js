@@ -32,6 +32,8 @@ class Agente {
     this.vision = this.esGuardian ? VISION.guardian : VISION.infiltrador;
     // La barra mide lo que le hace el equipo contrario: al Infiltrador el aturdidor, al Guardián la neutralización.
     this.barra = new BarraExposicion(this.esGuardian ? NEUTRALIZACION : ATURDIDOR);
+    this.aguante = AGUANTE.max;
+    this.agotado = false;         // sin aguante: no puede correr hasta recuperar AGUANTE.minimoParaCorrer
     this.pizarra = pizarra;
     pizarra.miembros.push(this);
     this.genes = genes;

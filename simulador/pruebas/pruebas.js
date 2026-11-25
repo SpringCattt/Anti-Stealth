@@ -276,8 +276,8 @@ prueba('Reanimación: 5 s junto al caído con ruido; después 3 s sin poder coge
   ticks(m, 180);
   m.iniciarAccion(a, 'saquear', celda(m, 5.5, 0.5));
   ticks(m, 121);
-  assert.strictEqual(a.bolsa, 60);
-  assert.strictEqual(m.botines.get(celda(m, 5.5, 0.5)), 40);
+  assert.strictEqual(a.bolsa, E.BOLSA_CAPACIDAD);
+  assert.strictEqual(m.botines.get(celda(m, 5.5, 0.5)), E.VALOR_BOTIN - E.BOLSA_CAPACIDAD);
   while (a.derribos < E.MAX_DERRIBOS - 1) { m.derribarAgente(a, 'guardianes'); a.reanimar(); }
   m.derribarAgente(a, 'guardianes');
   assert.strictEqual(a.estado, 'eliminado');
@@ -445,6 +445,85 @@ prueba('Red: el Guardián que elige custodiar va al botín amenazado y se queda;
   assert(enBotin.length >= 1, 'algún Guardián custodia un botín');
 });
 
+prueba('Red: emboscarSalida reparte a los Guardianes en esquinas de extracción distintas y van hacia ellas', () => {
+  const gg = forzarSalida(E.GENES_GUARDIAN_POR_DEFECTO, E.ENTRADAS_GUA, E.ACCIONES_GUA.indexOf('emboscarSalida'));
+  const gi = forzarSalida(E.GENES_INFILTRADOR_POR_DEFECTO, E.ENTRADAS_INF, E.ACCIONES_INF.indexOf('esperar'));
+  const m = E.crearSimulacion(gi, gg, { semilla: 1 });
+  ticks(m, E.PREPARACION_S * 60 + 60 * 3); // antes de cruzarse con los Infiltradores, que salen de esas esquinas
+  const activos = m.equipos.guardianes, esquinas = activos.map(g => g.emboscando);
+  assert(esquinas.every(Boolean) && new Set(esquinas).size === esquinas.length, 'cada uno en su esquina');
+  for (const g of activos) assert.strictEqual(g.meta, g.emboscando.celda, `G${g.id} va a su esquina`);
+});
+
+prueba('Red: perseguirCargado va a donde se vio a alguien con botín (y sin nadie cargado hace la rutina)', () => {
+  const m = pasillo();
+  m.ia = true;
+  const g = m.equipos.guardianes[0];
+  g.genes = forzarSalida(E.GENES_GUARDIAN_POR_DEFECTO, E.ENTRADAS_GUA, E.ACCIONES_GUA.indexOf('perseguirCargado'));
+  g.pizarra.contactos.set(99, { x: 15.5, y: 0.5, t: 0, botin: false });
+  ticks(m, 1);
+  assert.notStrictEqual(g.observar(m)[17], 1, 'sin botín visto la entrada está a 0');
+  g.pizarra.publicarContacto(98, 10.5, 0.5, m.t, -1, true);
+  assert.strictEqual(g.observar(m)[17], 1, 'entrada "visto con botín"');
+  ticks(m, 1);
+  assert.strictEqual(g.meta, celda(m, 10.5, 0.5), 'va a por el cargado, no a la otra alerta');
+  assert.strictEqual(g.modo, 'correr');
+});
+
+prueba('Rutina: con vigias = 1 cada Guardián se queda en un punto B distinto en vez de patrullar', () => {
+  const gi = forzarSalida(E.GENES_INFILTRADOR_POR_DEFECTO, E.ENTRADAS_INF, E.ACCIONES_INF.indexOf('esperar'));
+  const m = E.crearSimulacion(gi, { ...E.GENES_GUARDIAN_POR_DEFECTO, vigias: 1 }, { semilla: 1 });
+  ticks(m, E.PREPARACION_S * 60 + 60 * 40);
+  const puntos = m.equipos.guardianes.map(g => m.puntosB.find(b => { const [bx, by] = E.centroCelda(m.mapa, b); return Math.hypot(g.x - bx, g.y - by) < 1; }));
+  assert(puntos.every(p => p !== undefined) && new Set(puntos).size === puntos.length, JSON.stringify(puntos));
+});
+
+prueba('Rutina: si alguien fue visto con botín, solo el Guardián libre más cercano corta su salida', () => {
+  const gi = forzarSalida(E.GENES_INFILTRADOR_POR_DEFECTO, E.ENTRADAS_INF, E.ACCIONES_INF.indexOf('esperar'));
+  const m = E.crearSimulacion(gi, { ...E.GENES_GUARDIAN_POR_DEFECTO, cortar: 0 }, { semilla: 1 });
+  ticks(m, E.PREPARACION_S * 60 + 1);
+  const [bx, by] = E.centroCelda(m.mapa, m.puntosB[0]);
+  m.pizarras.guardianes.publicarContacto(99, bx, by, m.t, -1, true);
+  ticks(m, 2); // deciden uno tras otro: en el primer tick el lejano aún no sabe que el cercano va a cortar
+  assert.strictEqual(m.equipos.guardianes.filter(g => g.cortando != null).length, 1);
+});
+
+prueba('Aguante: correr lo gasta en AGUANTE.max/gasto s; agotado camina hasta recuperar el mínimo; quieto recupera', () => {
+  const m = pasillo(), [, inf] = m.agentes;
+  inf.dirX = 1; inf.modo = 'correr';
+  ticks(m, Math.round(E.AGUANTE.max / E.AGUANTE.gasto * 60) - 5);
+  assert(!inf.agotado && inf.modo === 'correr', 'aún corre');
+  inf.x = 2.5; ticks(m, 10);
+  assert(inf.agotado && inf.modo === 'caminar' && inf.aguante <= 1, 'agotado: camina');
+  inf.modo = 'correr'; inf.x = 2.5; ticks(m, 1);
+  assert.strictEqual(inf.modo, 'caminar', 'agotado no puede volver a correr');
+  inf.dirX = 0; inf.x = 2.5;
+  ticks(m, Math.ceil(E.AGUANTE.minimoParaCorrer / E.AGUANTE.recuperaQuieto * 60) + 2);
+  assert(!inf.agotado, 'quieto recupera lo bastante para volver a correr');
+});
+
+prueba('PEM: solo contra lo que estorba (cámara que lo mira o tapa su paso, sensor conocido en su ruta), nunca a través de una pared', () => {
+  // Cámara al otro lado de un muro, a 3 casillas: no la ve, no le estorba.
+  let m = motor(['......', '######', '......'], { G: [[5, 2]], S: [[0, 0]] });
+  let inf = m.agentes[1];
+  inf.x = 2.5; inf.y = 0.5;
+  const cam = { tipo: 'camara', equipo: 'guardianes', x: 2.5, y: 2.5, angulo: Math.PI / 2, anguloBase: Math.PI / 2, desde: 0, altura: E.ALTURA.DE_PIE, vision: E.VISION.camara, hasta: Infinity, desactivadoHasta: -Infinity };
+  assert(!inf.gadgetMolesto(m, cam), 'detrás de una pared no estorba');
+  // Misma cámara en su sala, mirándolo: sí.
+  m = pasillo(); inf = m.agentes[1];
+  inf.x = 10.5;
+  const cam2 = { ...cam, x: 13.5, y: 0.5, angulo: Math.PI, anguloBase: Math.PI };
+  assert(!inf.gadgetMolesto(m, cam2), 'a la vista pero sin mirarlo aún ni cubrir su camino: no estorba');
+  cam2.exposicion = new Map([[inf, 0.2]]);
+  assert(inf.gadgetMolesto(m, cam2), 'lo está mirando (cuenta exposición): estorba');
+  // Sensor: solo si lo conoce y está en su ruta.
+  const sen = { tipo: 'sensor', equipo: 'guardianes', x: 12.5, y: 0.5, hasta: Infinity, desactivadoHasta: -Infinity };
+  inf.ruta = [celda(m, 11.5, 0.5), celda(m, 12.5, 0.5)];
+  assert(!inf.gadgetMolesto(m, sen), 'sensor que no conoce: no');
+  inf.pizarra.sensoresVistos.add(sen);
+  assert(inf.gadgetMolesto(m, sen), 'sensor conocido en su ruta: estorba');
+});
+
 prueba('Reanimar se cancela si el que reanima se aleja', () => {
   const m = pasillo(2), [a, b] = m.equipos.infiltradores;
   b.x = 1.5;
@@ -469,20 +548,20 @@ prueba('El aturdimiento se pasa: sin reanimación se levanta a los DESPERTAR_S, 
 // ---------- 5. Economía ----------
 
 prueba('Bolsa: velocidad lineal hasta BOLSA_VEL_MIN; al caer 50 % al suelo y 50 % en el cuerpo', () => {
-  const m = pasillo(2), [a, b] = m.equipos.infiltradores;
-  a.bolsa = 30;
+  const m = pasillo(2), [a, b] = m.equipos.infiltradores, llena = E.BOLSA_CAPACIDAD, media = llena / 2;
+  a.bolsa = media;
   cerca(a.velocidad, 3.5 * (1 + E.BOLSA_VEL_MIN) / 2);
-  a.bolsa = 60;
+  a.bolsa = llena;
   cerca(a.velocidad, 3.5 * E.BOLSA_VEL_MIN);
   a.x = 3.5; b.x = 2.5;
   m.derribarAgente(a, 'guardianes');
-  assert.strictEqual(a.bolsa, 30);
-  assert.deepStrictEqual(m.suelo, [{ x: 3.5, y: 0.5, valor: 30 }]);
+  assert.strictEqual(a.bolsa, media);
+  assert.deepStrictEqual(m.suelo, [{ x: 3.5, y: 0.5, valor: media }]);
   m.iniciarAccion(b, 'recoger', m.suelo[0]);
   ticks(m, Math.round(E.RECOGER_SUELO_S / E.DT) - 2);
   assert.strictEqual(b.bolsa, 0);
   ticks(m, 3);
-  assert.strictEqual(b.bolsa, 30);
+  assert.strictEqual(b.bolsa, media);
   assert.strictEqual(m.suelo.length, 0);
 });
 
@@ -647,9 +726,9 @@ prueba('Sabotaje: el Infiltrador apaga una cámara en SABOTAJE_S; un Guardián s
   const cam = { tipo: 'camara', equipo: 'guardianes', x: 5.5, y: 0.5, angulo: Math.PI, anguloBase: Math.PI, desde: 0, altura: E.ALTURA.DE_PIE, vision: E.VISION.camara, hasta: Infinity, desactivadoHasta: -Infinity };
   m.gadgets.push(cam);
   g.decidir = () => {}; // primero, el Guardián quieto
-  inf.genes = { ...inf.genes, sabotaje: 1, paciencia_s: 0, prudencia: 0.5, humo_saqueo: 0, senuelo_distraccion: 0 };
+  inf.genes = { ...inf.genes, sabotaje: 1, paciencia_s: 0, prudencia: 0.5, humo_saqueo: 0, humo_cruce: 0, senuelo_distraccion: 0 }; // sin humo: taparía la cámara al Guardián
   inf.x = 4.5; // junto a la cámara (que lo vea no importa: las cámaras no aturden)
-  ticks(m, Math.round(E.SABOTAJE_S * 60) + 30);
+  ticks(m, Math.round(E.SABOTAJE_S * 60) + 150); // margen: antes puede tapar la cámara con humo y esperar a que salga
   assert(cam.saboteada && m.t < cam.desactivadoHasta, 'cámara saboteada');
   // Ahora el Infiltrador se aparta. De espaldas a la cámara, el Guardián no sabe que está apagada: no va.
   inf.decidir = () => {}; inf.x = 0.5;
@@ -685,17 +764,34 @@ prueba('Señuelo: ruidos falsos cada 0.5 s durante 5 s; solo 4 herramientas por 
   assert(!E.lanzarGadget(m, inf, 'humo', 0.5, 0.5), 'la quinta herramienta no debería salir');
 });
 
-prueba('Preparación: los Guardianes llevan sus 4 gadgets (round(proporcion_camaras · 4) cámaras) sin reloj ni Infiltradores', () => {
+prueba('Colocación: cada gadget va donde detecta pasos que los anteriores no (no se amontonan)', () => {
+  const m = motor(['.'.repeat(30)], { G: [[15, 0]], S: [[0, 0]], B: [[29, 0]] });
+  const celdas = (a, b) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
+  // 10 pasos por x = 3..5 y 4 por x = 25..27, todos andando.
+  const pasos = [...Array(10).fill([celdas(3, 5), []]), ...Array(4).fill([celdas(25, 27), []])];
+  const antes = E.fijarRastros({ ancho: m.mapa.ancho, alto: m.mapa.alto, pasos });
+  try {
+    E.planificarGadgetsGuardianes(m, { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: 0 });
+    const xs = m.equipos.guardianes[0].pendientes.map(p => p.celda % m.mapa.ancho);
+    const alcanza = (x, a, b) => x >= a - E.SENSOR.radio && x <= b + E.SENSOR.radio;
+    assert(alcanza(xs[0], 3, 5), 'el primero donde pasa más gente: ' + xs);
+    assert(alcanza(xs[1], 25, 27), 'el segundo donde aún no detecta nadie, no pegado al primero: ' + xs);
+  } finally { E.fijarRastros(antes); }
+});
+
+prueba('Preparación: los Guardianes colocan todo lo que planean (como mucho round(proporcion_camaras · 4) cámaras) sin reloj ni Infiltradores', () => {
   for (const [p, camaras] of [[0, 0], [0.5, 2], [1, 4]]) {
     const m = E.crearSimulacion(E.GENES_INFILTRADOR_POR_DEFECTO, { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: p });
     const inf = m.equipos.infiltradores.map(i => [i.x, i.y]), gua = m.equipos.guardianes.map(g => [g.x, g.y]);
     assert.strictEqual(m.gadgets.length, 0, 'nada colocado antes de empezar');
+    const planeados = m.equipos.guardianes.flatMap(g => g.pendientes);
+    assert(planeados.length >= E.GADGETS_POR_EQUIPO, 'al menos uno por hueco');
     ticks(m, E.PREPARACION_S * 60);
     assert(m.enPreparacion && m.tiempoRestante === E.TIEMPO_RONDA_S, 'el reloj no corre');
     assert.deepStrictEqual(m.equipos.infiltradores.map(i => [i.x, i.y]), inf, 'los Infiltradores esperan');
     assert.notDeepStrictEqual(m.equipos.guardianes.map(g => [g.x, g.y]), gua, 'los Guardianes se mueven');
     assert.strictEqual(m.gadgets.filter(g => g.tipo === 'camara').length, camaras);
-    assert.strictEqual(m.gadgets.length, camaras + E.SENSOR.porHueco * (E.GADGETS_POR_EQUIPO - camaras), 'cada hueco de sensores da porHueco');
+    assert.strictEqual(m.gadgets.length, planeados.length, 'llega a colocar todo lo planeado');
     assert.strictEqual(m.inventario.guardianes, 0);
     for (const c of m.gadgets.filter(g => g.tipo === 'camara')) { // solo en paredes
       const cx = Math.floor(c.x), cy = Math.floor(c.y);
@@ -754,6 +850,38 @@ prueba('Guardianes: dos que acuden a la misma alerta no acaban en la misma casil
 });
 
 // ---------- 7. Fitness, genes y rondas completas ----------
+
+prueba('Fitness durante la ronda: ser visto resta al Infiltrador; al Guardián solo le suma tenerlo a tiro del aturdidor', () => {
+  const m = pasillo(); // Guardián en x = 29.5 mirando al oeste, Infiltrador en x = 0.5
+  m.equipos.infiltradores[0].x = 23.5; // a 6 casillas: lo ve, pero fuera del aturdidor
+  m.equipos.infiltradores[0].angulo = m.equipos.infiltradores[0].anguloDeseado = 0;
+  const g = m.equipos.guardianes[0];
+  g.x = 29.5; g.angulo = g.anguloDeseado = Math.PI;
+  ticks(m, 60);
+  const lejos = m.stats.infiltradores.segundosVisto;
+  assert(lejos > 0.5, 'a 6 casillas lo ve');
+  assert.strictEqual(m.stats.guardianes.segundosAturdiendo, 0, 'de lejos lo ve pero no puntúa');
+  m.equipos.infiltradores[0].x = 26.5;
+  ticks(m, 60);
+  assert(m.stats.infiltradores.segundosVisto > lejos + 0.5, 'a 3 casillas lo ve ~1 s');
+  assert(m.stats.guardianes.segundosAturdiendo > 0.5);
+  m.ganador = 'guardianes';
+  const con = E.evaluarFitness(m);
+  m.stats.infiltradores.segundosVisto = 0; m.stats.guardianes.segundosAturdiendo = 0;
+  const sin = E.evaluarFitness(m);
+  assert(con.infiltrador < sin.infiltrador && con.guardian > sin.guardian);
+});
+
+prueba('aDistancia da lo mismo que Math.hypot(dx, dy) <= r, también justo en el borde', () => {
+  const rnd = E.mulberry32(4);
+  for (let k = 0; k < 200000; k++) {
+    const r = [1.5, 4.5, 9, 12, 13][k % 5], a = rnd() * 2 * Math.PI;
+    const d = k % 2 ? r * (1 + (rnd() - 0.5) * 1e-12) : rnd() * 2 * r; // la mitad pegados al borde
+    const dx = Math.cos(a) * d, dy = Math.sin(a) * d;
+    assert.strictEqual(E.aDistancia(dx, dy, r), Math.hypot(dx, dy) <= r, `${dx}, ${dy}, ${r}`);
+  }
+  assert(E.aDistancia(3, 4, 5) && !E.aDistancia(3, 4.000001, 5) && E.aDistancia(0, 0, 0));
+});
 
 prueba('Fitness: finito; ganar puntúa más; la hierba y el botín extraído restan al Guardián', () => {
   const m = pasillo();

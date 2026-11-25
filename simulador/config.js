@@ -65,7 +65,7 @@ const NEUTRALIZACION = { rango: 1.5, subida: 100, bajada: 50 };    // Infiltrado
 // false: solo si están todos eliminados (MAX_DERRIBOS); los inconscientes se levantan a los DESPERTAR_S.
 let GANA_CON_TODOS_CAIDOS = false;
 let DESPERTAR_S = 20; // un inconsciente se levanta solo pasado este tiempo (0 = solo con reanimación). let: lo barre el ajuste
-let MAX_DERRIBOS = 5;        // al quinto derribo queda eliminado (ajustado al equilibrio con cámaras, sensores y repertorio actuales)
+let MAX_DERRIBOS = 4;        // al cuarto derribo queda eliminado (con 5 los infiltradores entrenados ganaban el 78 %)
 
 // --- Interacciones (duración en s; todas cancelables si el agente se aleja o cae) ---
 const RANGO_INTERACCION = 1.2;  // distancia máxima a un cuerpo para reanimar o confiscar
@@ -78,8 +78,9 @@ const CONFISCAR_S = 3;          // Guardián recogiendo del suelo o confiscando 
 const DEVOLVER_S = 6;           // Guardián devolviendo botín a un punto B
 
 // --- Economía ---
+const RADIO_CUSTODIA = 6;         // casillas: un Guardián a <= RADIO_CUSTODIA de un punto B con botín lo está custodiando (fitness)
 const VALOR_BOTIN = 100;          // por punto B
-const BOLSA_CAPACIDAD = 60;
+const BOLSA_CAPACIDAD = 35; // con 100 para ganar hacen falta 3 viajes (con 60 bastaban 2: demasiado fácil en 3 minutos)
 let BOLSA_VEL_MIN = 0.75;         // con la bolsa llena va al 75 % (lineal); con 0.5 cargar era una sentencia
 const BOLSA_SUELTA = 0.5;         // al caer suelta el 50 % al suelo y retiene el resto en el cuerpo
 
@@ -117,12 +118,12 @@ const PEM = { radio: 4, duracion: 10 };     // desactiva los gadgets enemigos
 
 // --- Partida ---
 const AGENTES_POR_EQUIPO = 3;     // base de entrenamiento 3 contra 3; escalable a 5 (index.html?n=5)
-let BOTIN_PARA_GANAR = 100; // de 300 posibles; ajustado para ~50 % de victorias entre genes entrenados
+let BOTIN_PARA_GANAR = 100;
 let TIEMPO_RONDA_S = 180;
 const BONO_PRIMERA_EXTRACCION_S = 30;
 // Fase previa (no cuenta en el reloj): los Guardianes llevan sus gadgets a su sitio y se colocan; los Infiltradores
 // esperan en S. Los gadgets que no se hayan colocado al acabarla se pierden.
-const PREPARACION_S = 20;
+const PREPARACION_S = 12;
 const FLANCO_ALERTA = 3;
 const HUIDA_MEMORIA_S = 1; // un Infiltrador descubierto sigue huyendo hasta llevar esto sin que lo vean
 const MEMORIA_PATRULLA_S = 45; // cuánto recuerda un equipo por dónde ha visto pasar enemigos (memoria de patrullas)
@@ -138,9 +139,13 @@ const LUZ_REFRESCO_TICKS = 6; // la luz que ven los Infiltradores se recalcula c
 // rutina (la IA programada); el modo 0 deja el que ponga la acción. Las entradas las dan los métodos observar().
 const OCULTAS_RED = 12;
 const TICKS_DECISION = 15; // 0.25 s
-const ACCIONES_INF = ['rutina', 'irSaquear', 'irExtraer', 'esconderse', 'esperar', 'atacarYa', 'irSabotear', 'humo', 'distraerYa'];
-const ACCIONES_GUA = ['rutina', 'custodiar', 'cortarYa', 'buscarYa', 'esperar', 'patrullar', 'investigarYa'];
+const ACCIONES_INF = ['rutina', 'irSaquear', 'irExtraer', 'esconderse', 'esperar', 'atacarYa', 'irSabotear', 'humo', 'distraerYa', 'pem'];
+const ACCIONES_GUA = ['rutina', 'custodiar', 'cortarYa', 'buscarYa', 'esperar', 'patrullar', 'investigarYa', 'emboscarSalida', 'perseguirCargado'];
 const MODOS_RED = [null, 'sigilo', 'caminar', 'correr'];
-const ENTRADAS_INF = 18;
-const ENTRADAS_GUA = 16;
+const ENTRADAS_INF = 21;
+const ENTRADAS_GUA = 18;
+// --- Aguante (los dos bandos) ---
+// Correr lo gasta (gasto/s); caminar lo recupera despacio y quieto o agachado más rápido. A 0 no se puede correr hasta
+// tener otra vez minimoParaCorrer. Sin esto correr era gratis y el genético aprendía a correr siempre.
+const AGUANTE = { max: 100, gasto: 20, recuperaCaminando: 8, recuperaQuieto: 15, minimoParaCorrer: 30 };
 const TICKS_RONDA = (PREPARACION_S + TIEMPO_RONDA_S + BONO_PRIMERA_EXTRACCION_S) * TICKS_POR_SEGUNDO; // tope absoluto de una ronda

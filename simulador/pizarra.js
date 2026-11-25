@@ -18,7 +18,7 @@ class TeamBlackboard {
   // Contacto visual: posición exacta cada tick mientras se ve; al perderse queda como LKP durante LKP_S.
   // Guarda también la velocidad estimada (suavizada) para anticipar hacia dónde va, y apunta la casilla en la
   // memoria de avistamientos (marcas: celda -> último instante visto).
-  publicarContacto(id, x, y, t, celda = -1) {
+  publicarContacto(id, x, y, t, celda = -1, botin = false) {
     const previo = this.contactos.get(id);
     let vx = 0, vy = 0;
     if (previo && t > previo.t && t - previo.t <= 1) {
@@ -26,7 +26,7 @@ class TeamBlackboard {
       vx = 0.8 * (previo.vx || 0) + 0.2 * (x - previo.x) / dt;
       vy = 0.8 * (previo.vy || 0) + 0.2 * (y - previo.y) / dt;
     } else if (previo && t === previo.t) { vx = previo.vx || 0; vy = previo.vy || 0; }
-    this.contactos.set(id, { x, y, t, vx, vy });
+    this.contactos.set(id, { x, y, t, vx, vy, botin }); // botin: se le vio cargando
     if (celda >= 0) this.marcas.set(celda, t);
     if (!previo || t - previo.t > LKP_S) this.avisar(x, y, 'contacto');
   }

@@ -53,5 +53,25 @@ prueba('Co-evolución corta: repetible con la misma semilla, genes en rango, ron
   assert.notDeepStrictEqual(a.curva, E.coevolucionar(E.crearRonda, { ...PEQ, semilla: 8 }).curva);
 });
 
-console.log(fallos ? `\n${fallos} fallida(s)` : '\nTodas las pruebas pasan');
-process.exitCode = fallos ? 1 : 0;
+prueba('Arranque en caliente: el individuo 0 es la copia, hasta la mitad copias mutadas, el resto al azar', () => {
+  const base = { infiltrador: E.GENES_INFILTRADOR_POR_DEFECTO, guardian: E.GENES_GUARDIAN_POR_DEFECTO }, n = 4, r = 1;
+  const lote = E.coevolucion({ semilla: 3, poblacion: n, generaciones: 1, rivales: r, inicial: base }).next().value;
+  const inf = k => lote[k * (r + 1)].gi, gua = k => lote[n * (r + 1) + k * (r + 1)].gg; // rondas de cada individuo
+  const iguales = (a, b) => Object.keys(b).filter(k => a[k] === b[k]).length / Object.keys(b).length;
+  for (const [ind, genes] of [[inf, base.infiltrador], [gua, base.guardian]]) {
+    assert.deepStrictEqual(ind(0), genes, 'el 0 es la copia exacta');
+    assert(iguales(ind(1), genes) > 0.8 && iguales(ind(1), genes) < 1, 'el 1 es una copia con pocas mutaciones');
+    assert(iguales(ind(3), genes) < 0.2, 'el último es al azar');
+  }
+});
+
+(async () => {
+  // Repartir las rondas entre hilos no puede cambiar el resultado (el PRNG del genético no depende de quién juega).
+  try {
+    const { coevolucionarEnParalelo } = require('./paralelo.js');
+    assert.deepStrictEqual(await coevolucionarEnParalelo(PEQ, null, 3), E.coevolucionar(E.crearRonda, PEQ));
+    console.log('OK     Co-evolución en 3 hilos = la de un hilo');
+  } catch (e) { fallos++; console.log('FALLO  Co-evolución en 3 hilos = la de un hilo\n       ' + e.message); }
+  console.log(fallos ? `\n${fallos} fallida(s)` : '\nTodas las pruebas pasan');
+  process.exitCode = fallos ? 1 : 0;
+})();

@@ -57,12 +57,30 @@ const PARAMS_GA_POR_DEFECTO = { semilla: 1, poblacion: 16, generaciones: 12, riv
 // Rondas totales: generaciones · poblacion · (rivales+1) · 2 bandos. Rivales por evaluación = K mejores + 1 aleatorio.
 function contarRondas(p) { return p.generaciones * p.poblacion * (p.rivales + 1) * 2; }
 
-// crearRonda(genesInfiltrador, genesGuardian, semilla) -> sim nueva. alGeneracion(info) opcional para mostrar progreso.
-function coevolucionar(crearRonda, opciones = {}, alGeneracion = null) {
-  const p = { ...PARAMS_GA_POR_DEFECTO, ...opciones };
+// Una ronda del genético: { gi, gg, semilla } -> lo que el genético necesita de ella (en Node la juega un hilo aparte).
+function jugarRonda(crearRonda, { gi, gg, semilla }) {
+  const sim = crearRonda(gi, gg, semilla);
+  simular(sim, TICKS_RONDA);
+  return { infiltrador: sim.fitness.infiltrador, guardian: sim.fitness.guardian, meta: sim.ganador === 'infiltradores', derribo: sim.stats.infiltradores.caidas > 0 };
+}
+
+// La co-evolución como generador: cada generación entrega (yield) la lista de rondas a jugar y recibe sus resultados en
+// el mismo orden. Quién las juega (aquí mismo o varios hilos) no cambia nada: el PRNG del genético solo elige rivales y
+// semillas, así que el resultado es el mismo. alGeneracion(info) opcional para mostrar progreso.
+// opciones.inicial = { infiltrador, guardian } (genes de un entrenamiento anterior): arranque en caliente. El individuo 0
+// de cada bando es esa copia, hasta la mitad son copias mutadas y el resto al azar (para no perder variedad). Sin
+// inicial, toda la población es al azar (y el resultado no cambia respecto a antes de existir esta opción).
+function* coevolucion(opciones = {}, alGeneracion = null) {
+  const { inicial = null, ...resto } = opciones;
+  const p = { ...PARAMS_GA_POR_DEFECTO, ...resto, ...(inicial && { continuacion: true }) };
   const rnd = mulberry32(p.semilla);
-  let pobI = Array.from({ length: p.poblacion }, () => individuoAleatorio(rnd, RANGOS_INFILTRADOR));
-  let pobG = Array.from({ length: p.poblacion }, () => individuoAleatorio(rnd, RANGOS_GUARDIAN));
+  const poblacionInicial = (rangos, base) => Array.from({ length: p.poblacion }, (_, k) => {
+    if (!base || k >= p.poblacion / 2) return individuoAleatorio(rnd, rangos);
+    const copia = limitarGenes(base, rangos);
+    return k === 0 ? copia : mutar(copia, rnd, rangos, p.probMutacion, p.escalaMutacion);
+  });
+  let pobI = poblacionInicial(RANGOS_INFILTRADOR, inicial && inicial.infiltrador);
+  let pobG = poblacionInicial(RANGOS_GUARDIAN, inicial && inicial.guardian);
   let mejoresI = null, mejoresG = null; // K mejores de la generación anterior (null en la generación 0)
   let poblI0 = pobI, poblG0 = pobG;     // población de la que sale el rival aleatorio
   const curva = [];
@@ -78,24 +96,28 @@ function coevolucionar(crearRonda, opciones = {}, alGeneracion = null) {
 
   for (let gen = 0; gen < p.generaciones; gen++) {
     const ultima = gen === p.generaciones - 1;
-    const evaluar = (genes, rivales, esInfiltrador) => {
-      let suma = 0;
-      for (const rival of rivales) {
-        // Semilla de ronda distinta cada vez (sale del PRNG del genético: sigue siendo repetible).
+    // Rondas de la generación: cada individuo contra sus rivales, con una semilla distinta cada vez (sale del PRNG
+    // del genético: sigue siendo repetible). de[k] = [esInfiltrador, índice] de la ronda k.
+    const lote = [], de = [];
+    const apuntar = (pob, rivalesDe, esInfiltrador) => pob.forEach((genes, i) => {
+      for (const rival of rivalesDe()) {
         const semilla = Math.floor(rnd() * 2 ** 32);
-        const sim = esInfiltrador ? crearRonda(genes, rival, semilla) : crearRonda(rival, genes, semilla);
-        simular(sim, TICKS_RONDA);
-        suma += esInfiltrador ? sim.fitness.infiltrador : sim.fitness.guardian;
-        const meta = sim.ganador === 'infiltradores'; // "meta" = victoria por botín extraído
-        rondas++;
-        if (meta) metas++;
-        if (sim.stats.infiltradores.caidas) derribados++; // algún Infiltrador derribado en la ronda
-        if (ultima) { rondasUltima++; if (meta) metasUltima++; }
+        lote.push(esInfiltrador ? { gi: genes, gg: rival, semilla } : { gi: rival, gg: genes, semilla });
+        de.push([esInfiltrador, i]);
       }
-      return suma / rivales.length;
-    };
-    const fitI = pobI.map(g => evaluar(g, elegirRivales(mejoresG, poblG0), true));
-    const fitG = pobG.map(g => evaluar(g, elegirRivales(mejoresI, poblI0), false));
+    });
+    apuntar(pobI, () => elegirRivales(mejoresG, poblG0), true);
+    apuntar(pobG, () => elegirRivales(mejoresI, poblI0), false);
+    const resultados = yield lote;
+    const fitI = new Array(pobI.length).fill(0), fitG = new Array(pobG.length).fill(0), n = p.rivales + 1;
+    resultados.forEach((r, k) => {
+      const [esInfiltrador, i] = de[k];
+      if (esInfiltrador) fitI[i] += r.infiltrador / n; else fitG[i] += r.guardian / n; // media de sus rondas
+      rondas++;
+      if (r.meta) metas++; // "meta" = victoria por botín extraído
+      if (r.derribo) derribados++; // algún Infiltrador derribado en la ronda
+      if (ultima) { rondasUltima++; if (r.meta) metasUltima++; }
+    });
     const iI = fitI.indexOf(Math.max(...fitI)), iG = fitG.indexOf(Math.max(...fitG));
     // El mejor de ESTA generación: el fitness depende de los rivales del momento, así que comparar con generaciones
     // anteriores premiaría a los que se enfrentaron a rivales flojos (los primeros).
@@ -116,4 +138,12 @@ function coevolucionar(crearRonda, opciones = {}, alGeneracion = null) {
     pctMetaTotal: 100 * metas / rondas, pctDerriboTotal: 100 * derribados / rondas,
     pctMetaUltimaGeneracion: 100 * metasUltima / rondasUltima,
   };
+}
+
+// Versión de un solo hilo: juega cada lote aquí mismo. crearRonda(genesInfiltrador, genesGuardian, semilla) -> sim nueva.
+function coevolucionar(crearRonda, opciones = {}, alGeneracion = null) {
+  const it = coevolucion(opciones, alGeneracion);
+  let paso = it.next();
+  while (!paso.done) paso = it.next(paso.value.map(j => jugarRonda(crearRonda, j)));
+  return paso.value;
 }

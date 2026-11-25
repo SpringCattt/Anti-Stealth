@@ -5,7 +5,8 @@
 //  1. Enemigo a la vista: lo encara; se acerca hasta 0.8·rango del aturdidor (el motor carga la barra mientras lo ve).
 //  2. Lleva botín confiscado: lo devuelve al punto B más cercano (DEVOLVER_S).
 //  3. Ve un cuerpo infiltrador con bolsa o botín en el suelo: va y lo confisca (CONFISCAR_S).
-//  4. Reanimar a un compañero caído o acudir a una alerta de la pizarra (el orden lo decide prioridad_reanimar).
+//  4. Vigía (gen vigias): se queda en su punto B. Si alguien fue visto con botín, el libre más cercano corta su salida.
+//  4b. Reanimar a un compañero caído o acudir a una alerta de la pizarra (el orden lo decide prioridad_reanimar).
 //     A cada alerta acuden solo los round(investigar · activos) Guardianes más cercanos (mínimo 1).
 //  5. Patrulla G -> cada B -> G; en cada punto barre ±sweepAngle/2 durante (1 - patrol_bias) · VIGILANCIA_MAX_S.
 // Con HIERBA_PROHIBIDA_GUARDIAN la hierba exterior le cuesta COSTE_HIERBA_GUARDIAN en el A* (si no, sale libremente).
@@ -32,8 +33,10 @@ class Guardian extends Agente {
       this.modoRed = elegir(s, ACCIONES_GUA.length, MODOS_RED.length);
       this.proximaDecision = motor.ticks + TICKS_DECISION;
     }
-    if (ACCIONES_GUA[this.accionRed] !== 'custodiar') this.custodiando = null;
-    this[ACCIONES_GUA[this.accionRed]](motor);
+    const accion = ACCIONES_GUA[this.accionRed];
+    if (accion !== 'custodiar') this.custodiando = null;
+    if (accion !== 'emboscarSalida') this.emboscando = null;
+    this[accion](motor);
     if (MODOS_RED[this.modoRed]) this.modo = MODOS_RED[this.modoRed];
   }
 
@@ -62,6 +65,8 @@ class Guardian extends Agente {
       this.barra.valor / BARRA_MAX,
       Math.min(1, motor.equipos.guardianes.filter(a => a.activo).length / AGENTES_POR_EQUIPO),
       (this.accionRed || 0) / ACCIONES_GUA.length,
+      this.aguante / AGUANTE.max,
+      [...p.contactos.values()].some(c => c.botin) ? 1 : 0,
     ];
   }
 
@@ -97,6 +102,40 @@ class Guardian extends Agente {
   }
   investigarYa(motor) { if (!this.investigar(motor)) this.rutina(motor); }
 
+  // Emboscar: espera en la esquina de extracción más cercana al botín amenazado, mirando hacia la casa. Si ya hay
+  // otros emboscando, cada uno coge la siguiente esquina por cercanía.
+  emboscarSalida(motor) {
+    if (this.enemigoVisto) return this.perseguir(motor, this.enemigoVisto);
+    const [bx, by] = centroCelda(motor.mapa, this.botinAmenazado(motor)), esquinas = this.esquinas(motor);
+    const orden = [...esquinas].sort((a, b) => Math.hypot(a.x - bx, a.y - by) - Math.hypot(b.x - bx, b.y - by));
+    const antes = motor.equipos.guardianes.filter(o => o !== this && o.activo && o.emboscando && o.id < this.id).length;
+    const e = orden[antes % orden.length];
+    this.emboscando = e;
+    this.modo = Math.hypot(e.x - this.x, e.y - this.y) > this.genes.umbral_correr ? 'correr' : 'caminar';
+    if (this.irA(motor, e.celda)) this.anguloDeseado = Math.atan2(motor.mapa.alto / 2 - this.y, motor.mapa.ancho / 2 - this.x) + Math.sin(this.fase + motor.t) * 0.4;
+  }
+
+  // Una casilla por esquina de extracción: la más cercana al centro del mapa (calculado una vez por partida).
+  esquinas(motor) {
+    if (motor.esquinas) return motor.esquinas;
+    const mapa = motor.mapa, mx = mapa.ancho / 2, my = mapa.alto / 2, porEsquina = new Map();
+    for (const c of motor.extraccion) {
+      const [x, y] = centroCelda(mapa, c), k = (x < mx ? 0 : 1) + (y < my ? 0 : 2), d = Math.hypot(x - mx, y - my);
+      if (!porEsquina.has(k) || d < porEsquina.get(k).d) porEsquina.set(k, { celda: c, x, y, d });
+    }
+    return (motor.esquinas = [...porEsquina.values()]);
+  }
+
+  // Perseguir al que lleva botín: si lo ve, a por él; si no, a donde se le vio cargando por última vez (anticipado).
+  perseguirCargado(motor) {
+    if (this.enemigoVisto && this.enemigoVisto.bolsa > 0) return this.perseguir(motor, this.enemigoVisto);
+    const cargados = [...this.pizarra.contactos.values()].filter(c => c.botin);
+    if (!cargados.length) return this.rutina(motor);
+    const c = cargados.reduce((a, b) => (a.t >= b.t ? a : b)), destino = this.prediccion(motor, c);
+    this.modo = 'correr';
+    if (this.irA(motor, celdaEn(motor.mapa, destino.x, destino.y))) this.descartarAlerta(c);
+  }
+
   // --- Rutina: la IA programada (acción 0) ---
   rutina(motor) {
     const g = this.genes;
@@ -114,6 +153,9 @@ class Guardian extends Agente {
       if (this.irA(motor, botin.celda)) motor.iniciarAccion(this, botin.tipo, botin.objetivo);
       return;
     }
+    if (this.vigilarBotin(motor)) return;
+    const cargado = this.cargadoReciente();
+    if (cargado && this.cortar(motor, true, cargado)) return; // al que lleva botín se le espera en su salida
     if (this.buscar(motor)) return;
     let tareas = g.prioridad_reanimar >= 0.5 ? [this.reanimarAliado, this.investigar] : [this.investigar, this.reanimarAliado];
     tareas = g.prioridad_camaras >= 0.5 ? [this.reactivarCamara, ...tareas] : [...tareas, this.reactivarCamara];
@@ -177,11 +219,11 @@ class Guardian extends Agente {
   // --- Corte: con un contacto vigente, el Guardián libre más cercano va a la puerta por la que saldría hacia su
   // extracción más cercana (primera casilla de jardín de esa ruta) y espera ahí barriendo con la linterna hacia dentro.
   // Como mucho CORTE_MAX_S en la puerta; después no vuelve a cortar hasta pasados CORTE_ENFRIAMIENTO_S.
-  cortar(motor, forzado = false) {
+  cortar(motor, forzado = false, contacto = null) {
     if ((!forzado && this.genes.cortar < 0.5) || motor.t < (this.corteLibreDesde ?? -Infinity)) return false;
     const contactos = [...this.pizarra.contactos.values()];
     if (!contactos.length) return false;
-    const c = contactos.reduce((a, b) => (a.t >= b.t ? a : b)), mapa = motor.mapa, origen = celdaEn(mapa, c.x, c.y);
+    const c = contacto || contactos.reduce((a, b) => (a.t >= b.t ? a : b)), mapa = motor.mapa, origen = celdaEn(mapa, c.x, c.y);
     const cache = motor.cortes ??= new Map();
     if (!cache.has(origen)) {
       const ext = this.masCercanaA(motor, motor.extraccion, c.x, c.y), ruta = ext === undefined ? null : buscarRuta(mapa, origen, ext);
@@ -202,6 +244,25 @@ class Guardian extends Agente {
       const base = Math.atan2(c.y - this.y, c.x - this.x); // barrido de ±sweepAngle/2 mirando hacia el contacto
       this.anguloDeseado = base + Math.sin(this.fase + this.enPuerta * 1.5) * this.genes.sweepAngle / 2;
     }
+    return true;
+  }
+
+  // Contacto más reciente de alguien visto con botín (null si no hay).
+  cargadoReciente() {
+    const cargados = [...this.pizarra.contactos.values()].filter(c => c.botin);
+    return cargados.length ? cargados.reduce((a, b) => (a.t >= b.t ? a : b)) : null;
+  }
+
+  // Vigías: los round(vigias · activos) Guardianes activos de menor id se quedan cada uno en un punto B que
+  // aún tenga botín (los más llenos primero) en vez de patrullar; si son más que los puntos, desde un flanco.
+  vigilarBotin(motor) {
+    const activos = motor.equipos.guardianes.filter(a => a.activo), k = activos.indexOf(this);
+    if (k >= Math.round(this.genes.vigias * activos.length)) return false;
+    const puntos = motor.puntosB.filter(b => motor.botines.get(b) > 0).sort((a, b) => motor.botines.get(b) - motor.botines.get(a));
+    if (!puntos.length) return false;
+    const b = puntos[k % puntos.length], vuelta = Math.floor(k / puntos.length), [x, y] = centroCelda(motor.mapa, b);
+    this.modo = 'caminar';
+    if (this.irA(motor, vuelta ? this.celdaFlanco(motor.mapa, { x, y }, vuelta, vuelta + 1) : b)) this.anguloDeseado = this.fase + motor.t * 0.8;
     return true;
   }
 

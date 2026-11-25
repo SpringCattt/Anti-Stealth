@@ -150,7 +150,7 @@ class RenderCenital {
       this.escena.add(p);
       return p;
     };
-    const vista = { cuerpo, cono: this.crearCono(a.vision), barra: barra(0xff2020), bolsa: barra(0xffd23f), accion: barra(0x50ff70) };
+    const vista = { cuerpo, cono: this.crearCono(a.vision), barra: barra(0xff2020), bolsa: barra(0xffd23f), accion: barra(0x50ff70), aguante: barra(0x4fc3f7) };
     if (a.esGuardian) {
       // Foco de la linterna: mismo alcance y apertura que la visión lógica; las sombras salen de muros, cajas y humo.
       const v = a.vision, foco = new THREE.SpotLight(0xfff1c4, INTENSIDAD_LINTERNA, v.alcance * 1.15, v.apertura / 2, 0.35, 1.2);
@@ -167,7 +167,7 @@ class RenderCenital {
   dibujar(motor) {
     this.colocarCamara();
     motor.agentes.forEach((a, k) => {
-      const { cuerpo, cono, barra, bolsa, accion, foco } = this.vistas[k], visible = a.estado !== 'eliminado';
+      const { cuerpo, cono, barra, bolsa, accion, aguante, foco } = this.vistas[k], visible = a.estado !== 'eliminado';
       cuerpo.visible = visible;
       cono.visible = a.activo && this.verConos;
       if (foco) {
@@ -177,7 +177,7 @@ class RenderCenital {
         foco.position.set(a.x, ALTURA_LINTERNA, a.y);
         foco.target.position.set(a.x + Math.cos(a.angulo) * 4, 0, a.y + Math.sin(a.angulo) * 4);
       }
-      if (!visible) { barra.visible = bolsa.visible = accion.visible = false; return; }
+      if (!visible) { barra.visible = bolsa.visible = accion.visible = aguante.visible = false; return; }
       cuerpo.scale.y = a.activo ? a.altura : 0.2; // de pie 2, agachado 1, caído en el suelo
       cuerpo.position.set(a.x, cuerpo.scale.y / 2, a.y);
       cuerpo.rotation.y = -a.angulo;
@@ -186,6 +186,7 @@ class RenderCenital {
       this.barraSobre(barra, a, techo, a.barra.valor / BARRA_MAX);
       this.barraSobre(bolsa, a, techo + 0.18, a.bolsa / BOLSA_CAPACIDAD);
       this.barraSobre(accion, a, techo + 0.36, a.accion ? a.accion.progreso / a.accion.duracion : 0);
+      this.barraSobre(aguante, a, techo + 0.54, a.activo ? Math.max(0.02, a.aguante / AGUANTE.max) : 0); // azul: aguante (siempre visible)
       if (cono.visible) this.actualizarCono(cono, a, a.altura === ALTURA.DE_PIE ? RAYO_ALTO : RAYO_BAJO, a.esGuardian ? [1, 0.95, 0.6] : [0.4, 1, 0.5]);
     });
     this.dibujarCapa(motor);

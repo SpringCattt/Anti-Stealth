@@ -15,7 +15,7 @@
 //     humo_saqueo: tapa el botín al que va si una cámara o un Guardián conocido lo vigila;
 //     humo_cruce:  tapa el tramo iluminado de su ruta en vez de esperar a que se vaya la luz;
 //     humo_huida:  al ser descubierto, lo lanza entre él y quien lo ve.
-//  - Otras herramientas (uso_gadgets): PEM junto a un gadget enemigo, señuelo detrás de un Guardián.
+//  - Otras herramientas (uso_gadgets): señuelo detrás de un Guardián. El PEM lo decide la red (acción pem).
 //  - Objetivo (la primera que aplica):
 //     1. Espalda de un Guardián que el equipo ve, a menos de agresividad · 8 casillas y mirando hacia otro lado.
 //     2. Lo mejor puntuado entre reanimar a un aliado, botín (punto B o suelo) y extraer: peso / (1 + distancia/10),
@@ -89,6 +89,9 @@ class Infiltrador extends Agente {
       motor.gadgets.some(g => g.tipo === 'camara' && t >= g.desactivadoHasta && this.distanciaA(g) <= 12) ? 1 : 0,
       espalda ? 1 : 0,
       (this.accionRed || 0) / ACCIONES_INF.length, // lo que estaba haciendo: ayuda a no cambiar de idea a cada decisión
+      this.aguante / AGUANTE.max,
+      motor.gadgets.some(g => g.tipo === 'camara' && (g.exposicion?.get(this) || 0) > 0) ? 1 : 0, // una cámara lo está mirando
+      this.sensorEnRuta(motor) ? 1 : 0,
     ];
   }
 
@@ -139,18 +142,29 @@ class Infiltrador extends Agente {
   }
 
   // PEM si hay un gadget enemigo a su alcance; si no, señuelo detrás del Guardián visto más cercano. Luego, rutina.
+  // Señuelo detrás del Guardián visto más cercano (al girarse hacia el ruido da la espalda). Luego, rutina.
   distraerYa(motor) {
-    if (this.cooldownGadget <= 0 && motor.inventario.infiltradores > 0) {
-      let lanzado = false;
-      if (motor.gadgets.some(x => x.equipo === 'guardianes' && x.desactivadoHasta <= motor.t && this.distanciaA(x) <= PEM.radio)) {
-        lanzado = motor.lanzarGadget(this, 'pem', this.x, this.y);
-      } else {
-        const c = this.pizarra.contactosVigentes(motor.t).find(c => c.visto);
-        if (c) { const d = Math.max(0.1, this.distanciaA(c)); lanzado = motor.lanzarGadget(this, 'senuelo', c.x + (c.x - this.x) / d * 4, c.y + (c.y - this.y) / d * 4); }
-      }
-      if (lanzado) this.cooldownGadget = GADGET_COOLDOWN_S;
+    const c = this.pizarra.contactosVigentes(motor.t).find(c => c.visto);
+    if (c && this.cooldownGadget <= 0 && motor.inventario.infiltradores > 0) {
+      const d = Math.max(0.1, this.distanciaA(c));
+      if (motor.lanzarGadget(this, 'senuelo', c.x + (c.x - this.x) / d * 4, c.y + (c.y - this.y) / d * 4)) this.cooldownGadget = GADGET_COOLDOWN_S;
     }
     this.rutina(motor);
+  }
+
+  // PEM a sus pies si hay a su alcance un gadget enemigo que le estorba (gadgetMolesto). Cuándo hace falta lo decide la
+  // red (sabe si una cámara lo mira, si hay un sensor en su ruta, su aguante...). Luego, rutina.
+  pem(motor) {
+    if (this.cooldownGadget <= 0 && motor.inventario.infiltradores > 0 && motor.gadgets.some(x => this.gadgetMolesto(motor, x))) {
+      if (motor.lanzarGadget(this, 'pem', this.x, this.y)) this.cooldownGadget = GADGET_COOLDOWN_S;
+    }
+    this.rutina(motor);
+  }
+
+  // ¿Hay un sensor conocido y armado en las próximas casillas de su ruta?
+  sensorEnRuta(motor) {
+    const proximas = (this.ruta || []).slice(0, 4).map(c => centroCelda(motor.mapa, c));
+    return [...this.pizarra.sensoresVistos].some(s => sensorArmado(s, motor.t) && proximas.some(([x, y]) => Math.hypot(x - s.x, y - s.y) <= SENSOR.radio));
   }
 
   // --- Rutina: la IA programada (acción 0) ---
@@ -293,9 +307,10 @@ class Infiltrador extends Agente {
       if (c.agente !== this && quiere('reanimar')) candidatos.push({ tipo: 'reanimar', objetivo: c.agente, x: c.agente.x, y: c.agente.y, peso: g.prioridad_reanimar });
     }
     if ((tipos || !lleno) && puedeCoger) {
+      const guardias = this.pizarra.contactosVigentes(motor.t);
       for (const b of motor.puntosB) {
         if (motor.botines.get(b) > 0 && quiere('saquear')) {
-          const [x, y] = centroCelda(mapa, b), vigilado = this.vigilado(motor, x, y, this.pizarra.contactosVigentes(motor.t));
+          const [x, y] = centroCelda(mapa, b), vigilado = this.vigilado(motor, x, y, guardias);
           candidatos.push({ tipo: 'saquear', objetivo: b, x, y, peso: (1 - g.prioridad_reanimar) * (vigilado ? 1 - 0.8 * g.evitar_vigilado : 1) });
         }
       }
@@ -313,11 +328,11 @@ class Infiltrador extends Agente {
     }
     if (this.bolsa > 0 && (tipos ? quiere('extraer') : lleno || !hayBotin)) {
       // Extracción: penaliza las que tienen peligro conocido cerca (contactos, ruidos, caídos y patrullas recordadas).
-      const peligros = [...this.pizarra.puntosPeligro(motor.t), ...[...this.pizarra.marcas.keys()].map(c => { const [x, y] = centroCelda(mapa, c); return { x, y }; })];
-      for (const e of motor.extraccion) {
-        const [x, y] = centroCelda(mapa, e), cerca = peligros.filter(p => Math.hypot(p.x - x, p.y - y) <= 12).length;
-        candidatos.push({ tipo: 'extraer', objetivo: e, x, y, peso: (1 - g.prioridad_reanimar) / (1 + g.w_peligro / 10 * cerca) });
-      }
+      const cerca = this.peligroExtraccion(motor);
+      motor.extraccion.forEach((e, k) => {
+        const [x, y] = centroCelda(mapa, e);
+        candidatos.push({ tipo: 'extraer', objetivo: e, x, y, peso: (1 - g.prioridad_reanimar) / (1 + g.w_peligro / 10 * cerca[k]) });
+      });
     }
     // Reparto: cada compañero activo que ya va a por el mismo botín lo puntúa a la baja (dispersion), para no ir en
     // grupo y caer uno detrás de otro ante el mismo Guardián.
@@ -331,6 +346,19 @@ class Infiltrador extends Agente {
     if (mejor) mejor.celda = celdaEn(mapa, mejor.x, mejor.y);
     this.objetivoActual = mejor ? mejor.objetivo : null;
     return mejor;
+  }
+
+  // Peligros conocidos a <= 12 casillas de cada casilla de extracción (mismo orden que motor.extraccion). Es igual para
+  // todo el equipo en un tick (la pizarra no cambia mientras deciden), así que se calcula una vez por tick y equipo.
+  peligroExtraccion(motor) {
+    const p = this.pizarra;
+    if (p.peligroExt && p.peligroExt.ticks === motor.ticks && p.peligroExt.motor === motor) return p.peligroExt.cerca;
+    const mapa = motor.mapa, ext = motor.extraccion.map(e => centroCelda(mapa, e)), cerca = new Array(ext.length).fill(0);
+    const contar = (x, y) => { for (let k = 0; k < ext.length; k++) if (aDistancia(x - ext[k][0], y - ext[k][1], 12)) cerca[k]++; };
+    for (const q of p.puntosPeligro(motor.t)) contar(q.x, q.y);
+    for (const c of p.marcas.keys()) { const [x, y] = centroCelda(mapa, c); contar(x, y); }
+    p.peligroExt = { motor, ticks: motor.ticks, cerca };
+    return cerca;
   }
 
   // Si alguna de las 2 casillas siguientes de la ruta está iluminada, espera agachado hasta wait_time_s.
@@ -381,6 +409,21 @@ class Infiltrador extends Agente {
     if (motor.lanzarGadget(this, 'senuelo', c.x + dx / d * 6, c.y + dy / d * 6)) this.cooldownGadget = GADGET_COOLDOWN_S;
   }
 
+  // Gadget enemigo encendido a <= PEM.radio, a la vista (sin muros en medio) y que le estorba: una cámara que AHORA lo
+  // mira o cuyo cono actual cubre la casilla a la que va a entrar, o un sensor conocido y armado en su ruta.
+  // Si compensa gastar el PEM no lo decide esto: lo decide la red (acción pem).
+  gadgetMolesto(motor, g) {
+    if (g.equipo !== 'guardianes' || motor.t < g.desactivadoHasta || g.saboteada || this.distanciaA(g) > PEM.radio) return false;
+    if (!lineaDeVista(motor.mapa, this.x, this.y, g.x, g.y, RAYO_ALTO, false)) return false;
+    if (g.tipo === 'sensor') return this.pizarra.sensoresVistos.has(g) && sensorArmado(g, motor.t) && this.sensorEnRuta(motor);
+    if (g.tipo !== 'camara') return false;
+    if ((g.exposicion?.get(this) || 0) > 0) return true;
+    const siguiente = this.ruta && this.ruta[0];
+    if (siguiente === undefined) return false;
+    const [x, y] = centroCelda(motor.mapa, siguiente);
+    return intensidadVision(motor.mapa, g, { x, y, altura: this.altura }) > 0;
+  }
+
   // ¿Hay ya humo (armándose o activo) que cubra (x, y)? Entonces no gasta otro.
   humoCubre(motor, x, y) {
     return motor.gadgets.some(h => h.tipo === 'humo' && Math.hypot(h.x - x, h.y - y) <= HUMO.radio);
@@ -405,9 +448,8 @@ class Infiltrador extends Agente {
     const g = this.genes;
     if (this.cooldownGadget > 0 || g.uso_gadgets <= 0 || motor.inventario.infiltradores <= 0) return;
     let lanzado = false;
-    if (g.uso_gadgets >= 0.25 && motor.gadgets.some(x => x.equipo === 'guardianes' && x.desactivadoHasta <= motor.t && this.distanciaA(x) <= PEM.radio)) {
-      lanzado = motor.lanzarGadget(this, 'pem', this.x, this.y);
-    } else if (g.uso_gadgets >= 0.5 && this.barra.valor === 0) {
+    // El PEM ya no está en la rutina: es una acción de la red (pem), que decide cuándo hace falta.
+    if (g.uso_gadgets >= 0.5 && this.barra.valor === 0) {
       const c = guardias.find(c => c.visto && this.distanciaA(c) <= 8);
       if (c) {
         // Detrás del Guardián, en la prolongación de la línea que los une: al girarse hacia el ruido da la espalda.

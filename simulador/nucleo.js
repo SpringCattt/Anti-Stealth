@@ -58,8 +58,8 @@ class GameEngine {
     this.extraido = 0;      // botín del equipo infiltrador ya sacado por la extracción
     this.bonoUsado = false;
     this.stats = {
-      infiltradores: { extraido: 0, recogido: 0, derribos: 0, reanimaciones: 0, caidas: 0, gadgets: 0 },
-      guardianes: { derribos: 0, reanimaciones: 0, confiscado: 0, devuelto: 0, segundosHierba: 0, revelaciones: 0, caidas: 0, gadgets: 0 },
+      infiltradores: { extraido: 0, recogido: 0, derribos: 0, reanimaciones: 0, caidas: 0, gadgets: 0, segundosVisto: 0, segundosCamara: 0 },
+      guardianes: { derribos: 0, reanimaciones: 0, confiscado: 0, devuelto: 0, segundosHierba: 0, revelaciones: 0, caidas: 0, gadgets: 0, segundosAturdiendo: 0, segundosCustodia: 0, segundosCamaraApagada: 0 },
     };
     this.costeGuardianes = new Float32Array(n);
     for (let c = 0; c < n; c++) this.costeGuardianes[c] = mapa.hierba[c] && HIERBA_PROHIBIDA_GUARDIAN ? COSTE_HIERBA_GUARDIAN : 0;
@@ -110,7 +110,7 @@ class GameEngine {
       if (this.recargaGadget >= RECARGA_GADGET_S - 1e-9) { this.inventario.infiltradores++; this.recargaGadget = 0; }
     } else this.recargaGadget = 0;
     if (this.ia) for (const a of this.agentes) a.decidir(this);
-    for (const a of this.agentes) this.mover(a, DT);
+    for (const a of this.agentes) { this.gastarAguante(a, DT); this.mover(a, DT); }
     this.separar();
     this.percibir(DT);
     this.interactuar(DT);
@@ -136,13 +136,27 @@ class GameEngine {
   pasoPreparacion() {
     for (const g of this.equipos.guardianes) {
       g.decidir(this);
-      this.mover(g, DT);
+      this.mover(g, DT); // en la preparación no se gasta aguante (no es parte de la ronda)
     }
     this.reglaHierba(DT);
     for (const a of this.agentes) a.actualizarGiro(DT);
   }
 
   // Colisión por ejes contra celdas de altura >= CAJA (cajas y muros bloquean el paso; el humo no).
+  // Aguante: correr lo gasta; agotado no puede correr (pasa a caminar) hasta recuperar AGUANTE.minimoParaCorrer.
+  gastarAguante(a, dt) {
+    if (!a.activo) return;
+    if (a.agotado && a.modo === 'correr') a.modo = 'caminar';
+    if (a.moviendose && a.modo === 'correr') {
+      a.aguante = Math.max(0, a.aguante - AGUANTE.gasto * dt);
+      if (a.aguante === 0) { a.agotado = true; a.modo = 'caminar'; }
+    } else {
+      const ritmo = !a.moviendose || a.modo === 'sigilo' ? AGUANTE.recuperaQuieto : AGUANTE.recuperaCaminando;
+      a.aguante = Math.min(AGUANTE.max, a.aguante + ritmo * dt);
+      if (a.agotado && a.aguante >= AGUANTE.minimoParaCorrer) a.agotado = false;
+    }
+  }
+
   mover(a, dt) {
     if (!a.activo || !a.moviendose) return;
     const largo = Math.hypot(a.dirX, a.dirY), v = a.velocidad * dt / largo;
@@ -174,11 +188,9 @@ class GameEngine {
   }
 
   libre(x, y) {
-    const r = RADIO_AGENTE;
-    for (const [px, py] of [[x - r, y - r], [x + r, y - r], [x - r, y + r], [x + r, y + r]]) {
-      if (alturaEn(this.mapa, Math.floor(px), Math.floor(py)) >= ALTURA.CAJA) return false;
-    }
-    return true;
+    const r = RADIO_AGENTE, m = this.mapa, x0 = Math.floor(x - r), x1 = Math.floor(x + r), y0 = Math.floor(y - r), y1 = Math.floor(y + r);
+    // Las 4 esquinas del agente, sin crear arrays (se llama varias veces por agente y tick).
+    return alturaEn(m, x0, y0) < ALTURA.CAJA && alturaEn(m, x1, y0) < ALTURA.CAJA && alturaEn(m, x0, y1) < ALTURA.CAJA && alturaEn(m, x1, y1) < ALTURA.CAJA;
   }
 
   // origen: { x, y, equipo } (agente o señuelo). Lo oye cualquier enemigo activo dentro del radio y lo radia a su equipo.
@@ -216,13 +228,22 @@ class GameEngine {
       for (const obj of activos) {
         if (obj.equipo === obs.equipo || intensidadVision(this.mapa, obs, obj) === 0) continue;
         const d = Math.hypot(obj.x - obs.x, obj.y - obs.y);
-        obs.pizarra.publicarContacto(obj.id, obj.x, obj.y, this.t, obs.esGuardian ? -1 : celdaEn(this.mapa, obj.x, obj.y));
+        obs.pizarra.publicarContacto(obj.id, obj.x, obj.y, this.t, obs.esGuardian ? -1 : celdaEn(this.mapa, obj.x, obj.y), obj.bolsa > 0);
         if (d < cercano) { cercano = d; obs.ver(obj); }
         if (obs.esGuardian) {
           vistos.add(obj);
           if (d <= ATURDIDOR.rango) { obs.canalizando = true; aturdidos.add(obj); }
         }
       }
+    }
+
+    // Medidas "durante la ronda" para el fitness: segundos que cada bando hace lo que le conviene.
+    const sI = this.stats.infiltradores, sG = this.stats.guardianes;
+    sI.segundosVisto += vistos.size * dt;
+    sG.segundosAturdiendo += activos.filter(g => g.canalizando).length * dt; // solo mirar de lejos no cuenta
+    for (const c of this.gadgets) if (c.tipo === 'camara' && c.saboteada) sG.segundosCamaraApagada += dt;
+    for (const g of activos) {
+      if (g.esGuardian && this.puntosB.some(b => { const [bx, by] = centroCelda(this.mapa, b); return this.botines.get(b) > 0 && Math.hypot(g.x - bx, g.y - by) <= RADIO_CUSTODIA; })) sG.segundosCustodia += dt;
     }
 
     // Neutralización: Infiltrador a <= rango, en el semiplano trasero del Guardián y sin que ningún Guardián lo vea.
@@ -388,7 +409,10 @@ class GameEngine {
     if (this.cacheLuz.tick === turno) return this.cacheLuz.luz;
     const n = this.mapa.ancho * this.mapa.alto, iluminada = new Uint8Array(n), luz = new Uint8Array(n), lista = [];
     const vista = this.pizarras.infiltradores.luzVista, ojos = this.equipos.infiltradores.filter(i => i.activo);
-    for (const g of this.equipos.guardianes) if (g.activo) marcarIluminadas(this.mapa, g, iluminada, lista);
+    // Una casilla que ilumina g está a <= su alcance de g, y solo cuenta si un Infiltrador la tiene a <= el suyo: si g
+    // está más lejos que la suma de todos los Infiltradores, nada de su luz puede contar y no hace falta calcularla.
+    const alcanzable = g => ojos.some(i => Math.hypot(g.x - i.x, g.y - i.y) <= g.vision.alcance + i.vision.alcance + 1);
+    for (const g of this.equipos.guardianes) if (g.activo && alcanzable(g)) marcarIluminadas(this.mapa, g, iluminada, lista);
     // Las cámaras encendidas cuentan como luz si algún Infiltrador ve la cámara (su cono se deduce al verla).
     for (const g of this.gadgets) {
       if (!CAMARAS_COMO_LUZ || g.tipo !== 'camara' || this.t < g.desactivadoHasta) continue;

@@ -37,6 +37,14 @@ function transitable(mapa, cx, cy) {
   return alturaEn(mapa, cx, cy) === ALTURA.SUELO;
 }
 
+// ¿Math.hypot(dx, dy) <= r? Mismo resultado, pero sin hypot (lento) salvo en la franja de redondeo junto al borde.
+function aDistancia(dx, dy, r) {
+  const d2 = dx * dx + dy * dy, r2 = r * r;
+  if (d2 > r2 * (1 + 1e-9)) return false;
+  if (d2 < r2 * (1 - 1e-9)) return true;
+  return Math.hypot(dx, dy) <= r;
+}
+
 function celdaEn(mapa, x, y) {
   return Math.floor(x) + Math.floor(y) * mapa.ancho;
 }
@@ -49,7 +57,7 @@ function centroCelda(mapa, c) {
 // Distancia desde (x, y) en dirección ang hasta la primera celda con altura de visión >= capa, o max si no hay ninguna.
 // DDA (Amanatides-Woo): salta de borde de celda en borde de celda, sin muestrear. conHumo = false: el humo no tapa.
 function distanciaRayo(mapa, x, y, ang, capa, max, conHumo = true) {
-  const alturaDe = conHumo ? alturaVisionEn : alturaEn;
+  const ancho = mapa.ancho, alto = mapa.alto, altura = mapa.altura, humo = mapa.humo, MURO = ALTURA.MURO;
   const dx = Math.cos(ang), dy = Math.sin(ang);
   let cx = Math.floor(x), cy = Math.floor(y);
   const pasoX = dx > 0 ? 1 : -1, pasoY = dy > 0 ? 1 : -1;
@@ -60,7 +68,9 @@ function distanciaRayo(mapa, x, y, ang, capa, max, conHumo = true) {
     let t;
     if (tX < tY) { cx += pasoX; t = tX; tX += deltaX; } else { cy += pasoY; t = tY; tY += deltaY; }
     if (t >= max) return max;
-    if (alturaDe(mapa, cx, cy) >= capa) return t;
+    // = alturaVisionEn / alturaEn en línea (fuera de la rejilla es muro; con conHumo, el humo también).
+    const h = cx < 0 || cy < 0 || cx >= ancho || cy >= alto ? MURO : conHumo && humo[cx + cy * ancho] ? MURO : altura[cx + cy * ancho];
+    if (h >= capa) return t;
   }
 }
 
@@ -82,8 +92,9 @@ function capaVision(observador, objetivo) {
 // obs: { x, y, angulo, altura, vision }; obj: { x, y, altura }. Sirve igual para agentes y cámaras.
 // 0 = no lo ve. Si lo ve: 1 sin caída de luz; con caída, de 1 (pegado) a LUZ_MIN (borde del alcance).
 function intensidadVision(mapa, obs, obj) {
-  const v = obs.vision, d = Math.hypot(obj.x - obs.x, obj.y - obs.y);
-  if (d > v.alcance) return 0;
+  const v = obs.vision;
+  if (!aDistancia(obj.x - obs.x, obj.y - obs.y, v.alcance)) return 0;
+  const d = Math.hypot(obj.x - obs.x, obj.y - obs.y);
   if (d > 0 && Math.abs(difAngulo(Math.atan2(obj.y - obs.y, obj.x - obs.x), obs.angulo)) > v.apertura / 2) return 0;
   // El humo tapa a Guardianes y cámaras (salvo a <= HUMO.vistaCerca: se distingue la silueta); los Infiltradores
   // ven a través de él. Muros y cajas tapan a todos.
@@ -116,7 +127,7 @@ function marcarIluminadas(mapa, obs, luz, lista = null) {
   for (let cy = Math.max(0, cy0 - r); cy <= Math.min(mapa.alto - 1, cy0 + r); cy++) {
     for (let cx = Math.max(0, cx0 - r); cx <= Math.min(mapa.ancho - 1, cx0 + r); cx++) {
       const c = cx + cy * mapa.ancho;
-      if (luz[c] || !transitable(mapa, cx, cy)) continue;
+      if (luz[c] || mapa.altura[c] !== ALTURA.SUELO) continue; // = !transitable (cx, cy ya está dentro)
       punto.x = cx + 0.5; punto.y = cy + 0.5;
       if (intensidadVision(mapa, ojo, punto) > 0) { luz[c] = 1; if (lista) lista.push(c); }
     }
