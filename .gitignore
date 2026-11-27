@@ -4,3 +4,6 @@ editor_mapa/.godot/
 
 # Training output
 simulador/pruebas/*.log
+
+# Hall of fame: only needed to keep training, the page does not use it
+simulador/salon_fama.json

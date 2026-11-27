@@ -23,12 +23,7 @@ const NOMBRES = `MAPA_DISENO, mapaAlturas, transitable, aDistancia, celdaEn, cen
   GADGETS_POR_EQUIPO, HUMO, SENUELO, PEM, SENSOR, LKP_S, MODOS, AGENTES_POR_EQUIPO,
   PREPARACION_S, FLANCO_ALERTA, LUZ_REFRESCO_TICKS, DESPERTAR_S, LANZAMIENTO_MAX, SABOTAJE_S, REACTIVAR_S, CAMARA_DETECCION_S, RECARGA_GADGET_S, MEMORIA_PATRULLA_S, CORTE_MAX_S,
   evaluarRed, rangosRed, elegir, OCULTAS_RED, ACCIONES_INF, ACCIONES_GUA, MODOS_RED, ENTRADAS_INF, ENTRADAS_GUA, AGUANTE`;
-// Por dónde pasan los Infiltradores (pruebas/grabar_rastros.js): los Guardianes colocan sus gadgets con ello.
-const RUTA_RASTROS = path.join(RAIZ, 'rastros.json');
-if (fs.existsSync(RUTA_RASTROS)) vm.runInThisContext('RASTROS = ' + fs.readFileSync(RUTA_RASTROS, 'utf8'));
 const G = vm.runInThisContext(`({ ${NOMBRES} })`);
 
 // Ronda del genético: mapa real, sin render; la semilla la pone el genético.
-// fijarRastros(datos | null): cambia RASTROS (para las pruebas de colocación). Devuelve los que había.
-const fijarRastros = datos => { const antes = vm.runInThisContext('RASTROS'); globalThis.__rastros = datos; vm.runInThisContext('RASTROS = globalThis.__rastros'); return antes; };
-module.exports = { ...G, fijarRastros, crearRonda: (gi, gg, semilla) => G.crearSimulacion(gi, gg, { semilla }) };
+module.exports = { ...G, crearRonda: (gi, gg, semilla) => G.crearSimulacion(gi, gg, { semilla }) };

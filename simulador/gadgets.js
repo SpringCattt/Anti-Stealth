@@ -10,121 +10,68 @@
 //   - senuelo: ruidos falsos de radio SENUELO.ruido cada RUIDO_INTERVALO_S durante SENUELO.duracion.
 //   - pem: instantáneo; desactiva los gadgets enemigos a <= PEM.radio durante PEM.duracion (queda 0.5 s para dibujarlo).
 
-// --- Colocación (Guardianes): donde más Infiltradores habrían detectado ---
-// Datos: RASTROS (rastros.json, lo graba pruebas/grabar_rastros.js con los equipos entrenados; lo cargan cargar.js y
-// principal.js). Es una lista de "pasos": un Infiltrador durante una ventana de SENSOR.recarga s, con las casillas por
-// las que pasó andando/corriendo y en las que estuvo agachado o quieto. Sin rastros (o de otro mapa), cada ruta más
-// corta de una esquina a un punto B cuenta como un paso.
-// Un sensor detecta un paso si este anduvo o corrió a <= SENSOR.radio (en sigilo no lo nota). Una cámara, si el paso
-// tocó alguna casilla de las que ve en todo su barrido.
-// shortcut: la cámara no cuenta los CAMARA_DETECCION_S que necesita ni en qué punto del barrido está; si se queda
-// corto, simular la cámara sobre las posiciones grabadas con su tiempo.
-let RASTROS = null;
-const CACHE_TACTICA = new WeakMap();
 const CAMARA_EN_PARED = 0.45; // la cámara se monta en la cara del muro, no en el centro de la casilla
 
-// Pasos de los rastros si son de este mapa; si no, las rutas más cortas de cada esquina de salida a cada punto B.
-function pasosInfiltradores(motor) {
-  const mapa = motor.mapa;
-  if (RASTROS && RASTROS.ancho === mapa.ancho && RASTROS.alto === mapa.alto) return RASTROS.pasos;
-  const salidas = []; // una salida por grupo de casillas S contiguas (una por esquina)
-  for (const [x, y] of mapa.marcadores.S || []) {
-    if (!salidas.some(([a, b]) => Math.abs(a - x) + Math.abs(b - y) <= 4)) salidas.push([x, y]);
-  }
-  const pasos = [];
-  for (const [sx, sy] of salidas) for (const b of motor.puntosB) pasos.push([buscarRuta(mapa, sx + sy * mapa.ancho, b) || [], []]);
-  return pasos;
-}
+// --- Colocación aprendida (Guardianes): los genes eligen el sitio de cada gadget ---
+// Cada posición i (0 .. POSICIONES_GADGET-1) son 3 genes en [0, 1]: gadget{i}_x y gadget{i}_y (un punto del mapa en
+// proporción a su ancho y alto) y gadget{i}_giro (hacia dónde mira, si es cámara). El gadget va a la casilla candidata
+// libre más cercana a ese punto: así una mutación pequeña lo mueve un poco, no a la otra punta. Los huecos de cámara
+// usan las posiciones 0 .. nCamaras-1 y los de sensores las siguientes (SENSOR.porHueco por hueco).
+// Nada decide "qué sitio es bueno" a mano: lo que hace ganar se queda (genético). Un sitio al que su Guardián no llega
+// en la preparación se pierde, y eso también lo aprende.
+const POSICIONES_GADGET = GADGETS_POR_EQUIPO * SENSOR.porHueco;
+const CACHE_CANDIDATOS = new WeakMap();
 
-// Candidatos de sensor (cada casilla libre) y de cámara (en una pared), cada uno con los pasos que detecta (detecta:
-// índices de pasos, sin repetir). Se calcula una vez por mapa y rastros (cache): no depende de los genes.
-function tacticaDelMapa(motor) {
-  const cache = CACHE_TACTICA.get(motor.diseno);
-  if (cache && cache.rastros === RASTROS) return cache;
-  const mapa = motor.mapa, n = mapa.ancho * mapa.alto, pasos = pasosInfiltradores(motor);
-  const moviendo = Array.from({ length: n }, () => []), tocada = Array.from({ length: n }, () => []); // casilla -> pasos
-  pasos.forEach(([mov, quieto], p) => {
-    for (const c of mov) { moviendo[c].push(p); tocada[c].push(p); }
-    for (const c of quieto) tocada[c].push(p);
-  });
-  const unir = (listas, celdas) => { const s = new Set(); for (const c of celdas) for (const p of listas[c]) s.add(p); return [...s]; };
-
-  const sensores = [];
-  for (let c = 0; c < n; c++) {
+// Candidatos de un mapa (una vez por mapa): casillas libres para sensores; para cámaras, cada casilla libre con un muro
+// al lado (4 vecinas) y sus orientaciones posibles: en la cara de ese muro (a CAMARA_EN_PARED del centro) mirando hacia
+// fuera, de frente o a ±45°.
+function candidatosDelMapa(motor) {
+  if (CACHE_CANDIDATOS.has(motor.diseno)) return CACHE_CANDIDATOS.get(motor.diseno);
+  const mapa = motor.mapa, sensores = [], camaras = [];
+  for (let c = 0; c < mapa.ancho * mapa.alto; c++) {
     const cx = c % mapa.ancho, cy = (c - cx) / mapa.ancho;
     if (!transitable(mapa, cx, cy)) continue;
-    const detecta = unir(moviendo, celdasEnRadio(mapa, cx + 0.5, cy + 0.5, SENSOR.radio));
-    if (detecta.length) sensores.push({ celda: c, detecta });
-  }
-  // Cámaras: solo en paredes. Casilla libre con un muro al lado (4 vecinas): la cámara va en la cara de ese muro (a
-  // CAMARA_EN_PARED del centro) y mira hacia fuera, de frente o a ±45°; ve lo que cubre todo su barrido.
-  const vision = { ...VISION.camara, apertura: VISION.camara.apertura + 2 * CAMARA_BARRIDO.amplitud };
-  const camaras = [], punto = { x: 0, y: 0, altura: ALTURA.DE_PIE }, r = Math.ceil(vision.alcance);
-  for (let c = 0; c < n; c++) {
-    const cx = c % mapa.ancho, cy = (c - cx) / mapa.ancho;
-    if (!transitable(mapa, cx, cy)) continue;
+    sensores.push({ celda: c, x: cx + 0.5, y: cy + 0.5 });
+    const opciones = [];
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       if (alturaEn(mapa, cx + dx, cy + dy) < ALTURA.MURO) continue;
       const fuera = Math.atan2(-dy, -dx);
       for (const giro of [-Math.PI / 4, 0, Math.PI / 4]) {
-        const obs = { x: cx + 0.5 + dx * CAMARA_EN_PARED, y: cy + 0.5 + dy * CAMARA_EN_PARED, angulo: fuera + giro, altura: ALTURA.DE_PIE, vision };
-        const ve = [];
-        for (let y = Math.max(0, cy - r); y <= Math.min(mapa.alto - 1, cy + r); y++) {
-          for (let x = Math.max(0, cx - r); x <= Math.min(mapa.ancho - 1, cx + r); x++) {
-            const i = x + y * mapa.ancho;
-            if (!tocada[i].length) continue; // por ahí no pasó nadie: no suma
-            punto.x = x + 0.5; punto.y = y + 0.5;
-            if (intensidadVision(mapa, obs, punto) > 0) ve.push(i);
-          }
-        }
-        const detecta = unir(tocada, ve);
-        if (detecta.length) camaras.push({ celda: c, x: obs.x, y: obs.y, angulo: obs.angulo, normal: fuera, detecta });
+        opciones.push({ celda: c, x: cx + 0.5 + dx * CAMARA_EN_PARED, y: cy + 0.5 + dy * CAMARA_EN_PARED, angulo: fuera + giro, normal: fuera });
       }
     }
+    if (opciones.length) camaras.push({ celda: c, x: cx + 0.5, y: cy + 0.5, opciones });
   }
-  const tactica = { rastros: RASTROS, nPasos: pasos.length, sensores, camaras };
-  CACHE_TACTICA.set(motor.diseno, tactica);
-  return tactica;
+  const candidatos = { sensores, camaras };
+  CACHE_CANDIDATOS.set(motor.diseno, candidatos);
+  return candidatos;
 }
 
-// Plan de gadgets: round(proporcion_camaras · N) cámaras y el resto huecos de sensores (SENSOR.porHueco sensores cada
-// uno). Se eligen uno a uno (voraz): cada vez el candidato que detecta más pasos que AÚN no detecta ningún gadget ya
-// elegido (a igualdad, el que más detecta en total). Así un segundo gadget encima del primero no suma nada.
-// Cada gadget se asigna a un Guardián (k % n), que lo lleva durante la preparación (Guardian.pendientes), y solo vale
-// una casilla a la que ese Guardián llega a tiempo corriendo desde donde dejó el anterior (si no, se perdería).
-const HOLGURA_PREPARACION = 1.3; // el tiempo real de llegar es ~1.3 veces el de la ruta ideal (giros, choques); medido
+// Plan de gadgets: round(proporcion_camaras · N) cámaras y el resto huecos de sensores. Cada gadget se asigna a un
+// Guardián (k % n), que lo lleva durante la preparación (Guardian.pendientes).
 function planificarGadgetsGuardianes(motor, genes) {
-  const { nPasos, sensores, camaras } = tacticaDelMapa(motor), guardianes = motor.equipos.guardianes, mapa = motor.mapa;
-  const detectado = new Uint8Array(nPasos);
-  const nuevos = cand => { let k = 0; for (const p of cand.detecta) if (!detectado[p]) k++; return k; };
-  // Por Guardián: dónde estará tras dejar lo que ya lleva, cuánto tiempo de preparación habrá gastado y las distancias.
-  const ruta = guardianes.map(g => ({ celda: celdaEn(mapa, g.x, g.y), tiempo: 0, dist: null }));
-  const mejorDe = (lista, usado, quien) => {
-    const r = ruta[quien];
-    r.dist ??= distanciasDesde(mapa, r.celda);
-    let mejor = null, gana = -1, total = -1;
-    for (const cand of lista) {
-      if (usado.has(cand.celda) || r.tiempo + r.dist[cand.celda] / MODOS.correr.velocidad * HOLGURA_PREPARACION > PREPARACION_S) continue;
-      const g = nuevos(cand);
-      if (g > gana || (g === gana && cand.detecta.length > total)) { mejor = cand; gana = g; total = cand.detecta.length; }
+  const { sensores, camaras } = candidatosDelMapa(motor), guardianes = motor.equipos.guardianes, mapa = motor.mapa;
+  const masCercano = (lista, i, usado) => {
+    const px = genes[`gadget${i}_x`] * mapa.ancho, py = genes[`gadget${i}_y`] * mapa.alto;
+    let mejor = null, dMin = Infinity;
+    for (const c of lista) {
+      const d = (c.x - px) ** 2 + (c.y - py) ** 2;
+      if (d < dMin && !usado.has(c.celda)) { dMin = d; mejor = c; }
     }
-    if (!mejor) return null;
-    usado.add(mejor.celda);
-    for (const p of mejor.detecta) detectado[p] = 1;
-    r.tiempo += r.dist[mejor.celda] / MODOS.correr.velocidad * HOLGURA_PREPARACION;
-    r.celda = mejor.celda;
-    r.dist = null;
+    if (mejor) usado.add(mejor.celda);
     return mejor;
   };
   const nCamaras = Math.round(genes.proporcion_camaras * GADGETS_POR_EQUIPO), conCamara = new Set(), conSensor = new Set();
   for (let k = 0; k < GADGETS_POR_EQUIPO; k++) {
     if (k < nCamaras) {
-      const quien = k % guardianes.length, c = mejorDe(camaras, conCamara, quien);
-      if (c) guardianes[quien].pendientes.push({ tipo: 'camara', celda: c.celda, x: c.x, y: c.y, angulo: c.angulo, normal: c.normal });
+      const c = masCercano(camaras, k, conCamara);
+      if (!c) continue;
+      const o = c.opciones[Math.min(c.opciones.length - 1, Math.floor(genes[`gadget${k}_giro`] * c.opciones.length))];
+      guardianes[k % guardianes.length].pendientes.push({ tipo: 'camara', celda: o.celda, x: o.x, y: o.y, angulo: o.angulo, normal: o.normal });
     } else {
       for (let s = 0; s < SENSOR.porHueco; s++) {
-        const quien = (k + s) % guardianes.length, c = mejorDe(sensores, conSensor, quien);
-        if (c) guardianes[quien].pendientes.push({ tipo: 'sensor', celda: c.celda, extra: s > 0 }); // el extra no gasta hueco
+        const c = masCercano(sensores, nCamaras + SENSOR.porHueco * (k - nCamaras) + s, conSensor);
+        if (c) guardianes[(k + s) % guardianes.length].pendientes.push({ tipo: 'sensor', celda: c.celda, extra: s > 0 }); // el extra no gasta hueco
       }
     }
   }

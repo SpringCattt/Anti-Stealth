@@ -24,6 +24,41 @@ prueba('Genes aleatorios, cruzados y mutados (mutación brutal) quedan en rango'
   }
 });
 
+prueba('Mutación: los genes de la rutina mutan con prob; los pesos de la red, ~12 por hijo', () => {
+  const R = E.RANGOS_INFILTRADOR, rnd = E.mulberry32(5), base = E.GENES_INFILTRADOR_POR_DEFECTO;
+  const pesos = Object.keys(R).filter(k => /^p\d+$/.test(k)), rutina = Object.keys(R).filter(k => !/^p\d+$/.test(k));
+  let cR = 0, cP = 0;
+  for (let i = 0; i < 400; i++) {
+    const m = E.mutar(base, rnd, R, 0.3, 0.1);
+    cR += rutina.filter(k => m[k] !== base[k]).length; cP += pesos.filter(k => m[k] !== base[k]).length;
+  }
+  const fR = cR / (400 * rutina.length), porHijo = cP / 400;
+  assert(fR > 0.2 && fR < 0.35, 'rutina: ' + fR.toFixed(2)); // un poco menos de 0.3: alguno queda igual al recortarse al rango
+  assert(porHijo > 9 && porHijo < 15, 'pesos por hijo: ' + porHijo.toFixed(1));
+});
+
+prueba('Gadgets: el cruce copia cada uno entero de un padre; la mutación mueve ~1 por hijo y poco', () => {
+  const R = E.RANGOS_GUARDIAN, rnd = E.mulberry32(6), a = E.GENES_GUARDIAN_POR_DEFECTO;
+  const b = { ...a }; for (const k of Object.keys(R)) if (k.startsWith('gadget')) b[k] = 1 - a[k];
+  const n = Object.keys(R).filter(k => k.endsWith('_x') && k.startsWith('gadget')).length;
+  for (let i = 0; i < 50; i++) {
+    const h = E.cruce(a, b, rnd, R);
+    for (let g = 0; g < n; g++) {
+      const de = [a, b].filter(p => ['x', 'y', 'giro'].every(c => h[`gadget${g}_${c}`] === p[`gadget${g}_${c}`]));
+      assert(de.length >= 1, `gadget ${g} mezclado`);
+    }
+  }
+  let movidos = 0, salto = 0;
+  for (let i = 0; i < 400; i++) {
+    const m = E.mutar(a, rnd, R, 0.3, 0.1);
+    for (let g = 0; g < n; g++) if (m[`gadget${g}_x`] !== a[`gadget${g}_x`] || m[`gadget${g}_y`] !== a[`gadget${g}_y`]) {
+      movidos++; salto = Math.max(salto, Math.abs(m[`gadget${g}_x`] - a[`gadget${g}_x`]));
+    }
+  }
+  assert(movidos / 400 > 0.7 && movidos / 400 < 1.3, 'gadgets movidos por hijo: ' + movidos / 400);
+  assert(salto < 0.2, 'salto máximo ' + salto);
+});
+
 prueba('Torneo sesgado hacia el fitness alto (k=3)', () => {
   const rnd = E.mulberry32(2), fit = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   const media = Array.from({ length: 2000 }, () => fit[E.torneo(fit, rnd)]).reduce((s, x) => s + x) / 2000;
@@ -49,8 +84,24 @@ prueba('Co-evolución corta: repetible con la misma semilla, genes en rango, ron
   const a = E.coevolucionar(E.crearRonda, PEQ), b = E.coevolucionar(E.crearRonda, PEQ);
   assert.deepStrictEqual(a, b);
   assert.strictEqual(a.rondas, E.contarRondas({ ...E.PARAMS_GA_POR_DEFECTO, ...PEQ }));
+  assert.strictEqual(a.salon.infiltradores.length, 1, 'entra el campeón de la última generación');
+  const conSalon = E.coevolucionar(E.crearRonda, { ...PEQ, salon: a.salon });
+  assert.strictEqual(conSalon.rondas, E.contarRondas({ ...E.PARAMS_GA_POR_DEFECTO, ...PEQ }, 2), 'con salón inicial hay rival del salón desde la gen 0');
+  assert.strictEqual(conSalon.salon.guardianes.length, 2, 'el salón se acumula entre entrenamientos');
+  const largo = E.coevolucion({ ...PEQ, generaciones: 9 });
+  let paso = largo.next(), gens = 0;
+  while (!paso.done) { paso = largo.next(paso.value.map(() => ({ infiltrador: 0, guardian: 0, meta: false, derribo: false }))); gens++; }
+  assert.strictEqual(paso.value.salon.guardianes.length, 3, 'uno de cada SALON_CADA generaciones (3, 7) y la última (8)');
   assert(enRango(a.mejorInfiltrador.genes, E.RANGOS_INFILTRADOR) && enRango(a.mejorGuardian.genes, E.RANGOS_GUARDIAN));
   assert.notDeepStrictEqual(a.curva, E.coevolucionar(E.crearRonda, { ...PEQ, semilla: 8 }).curva);
+});
+
+prueba('Validación: el campeón guardado es el de mejor media en las partidas extra, de entre los n mejores', () => {
+  const v = E.coevolucionar(E.crearRonda, { ...PEQ, poblacion: 4, validacion: 2 });
+  assert(v.mejorInfiltrador.validado && v.mejorGuardian.validado);
+  assert(enRango(v.mejorInfiltrador.genes, E.RANGOS_INFILTRADOR) && enRango(v.mejorGuardian.genes, E.RANGOS_GUARDIAN));
+  assert.deepStrictEqual(v.salon.guardianes[v.salon.guardianes.length - 1], v.mejorGuardian.genes, 'el validado entra en el salón');
+  assert(v.rondas > E.contarRondas({ ...E.PARAMS_GA_POR_DEFECTO, ...PEQ, poblacion: 4 }), 'juega partidas extra');
 });
 
 prueba('Arranque en caliente: el individuo 0 es la copia, hasta la mitad copias mutadas, el resto al azar', () => {

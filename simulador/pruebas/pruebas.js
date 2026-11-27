@@ -764,35 +764,40 @@ prueba('Señuelo: ruidos falsos cada 0.5 s durante 5 s; solo 4 herramientas por 
   assert(!E.lanzarGadget(m, inf, 'humo', 0.5, 0.5), 'la quinta herramienta no debería salir');
 });
 
-prueba('Colocación: cada gadget va donde detecta pasos que los anteriores no (no se amontonan)', () => {
-  const m = motor(['.'.repeat(30)], { G: [[15, 0]], S: [[0, 0]], B: [[29, 0]] });
-  const celdas = (a, b) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
-  // 10 pasos por x = 3..5 y 4 por x = 25..27, todos andando.
-  const pasos = [...Array(10).fill([celdas(3, 5), []]), ...Array(4).fill([celdas(25, 27), []])];
-  const antes = E.fijarRastros({ ancho: m.mapa.ancho, alto: m.mapa.alto, pasos });
-  try {
-    E.planificarGadgetsGuardianes(m, { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: 0 });
-    const xs = m.equipos.guardianes[0].pendientes.map(p => p.celda % m.mapa.ancho);
-    const alcanza = (x, a, b) => x >= a - E.SENSOR.radio && x <= b + E.SENSOR.radio;
-    assert(alcanza(xs[0], 3, 5), 'el primero donde pasa más gente: ' + xs);
-    assert(alcanza(xs[1], 25, 27), 'el segundo donde aún no detecta nadie, no pegado al primero: ' + xs);
-  } finally { E.fijarRastros(antes); }
+prueba('Colocación aprendida: cada gadget va a la casilla libre más cercana al punto de sus genes; la cámara mira según su gen', () => {
+  const m = motor(['.'.repeat(30), '#'.repeat(30)], { G: [[15, 0]], S: [[0, 0]], B: [[29, 0]] });
+  const a = (x, y) => ({ x: (x + 0.5) / 30, y: (y + 0.5) / 2 });
+  const posiciones = (lista, base) => Object.assign({ ...base }, ...lista.map(([x, giro], i) => ({ [`gadget${i}_x`]: a(x, 0).x, [`gadget${i}_y`]: a(x, 0).y, [`gadget${i}_giro`]: giro })));
+  // Solo sensores: dos posiciones en la misma casilla -> el segundo va a la libre de al lado, no encima.
+  E.planificarGadgetsGuardianes(m, posiciones([[4, 0], [4, 0], [20, 0], [20, 0], [10, 0], [10, 0], [25, 0], [25, 0]], { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: 0 }));
+  const xs = m.equipos.guardianes[0].pendientes.map(p => p.celda % 30);
+  assert.strictEqual(xs[0], 4);
+  assert(xs[1] === 3 || xs[1] === 5, 'el segundo al lado: ' + xs);
+  assert.strictEqual(xs[2], 20);
+  // Una cámara en x = 7: con giro 0 y giro 0.99 mira hacia sitios distintos (6 opciones: muro arriba y abajo, ±45°).
+  const angulo = giro => {
+    m.equipos.guardianes[0].pendientes.length = 0;
+    E.planificarGadgetsGuardianes(m, posiciones([[7, giro]], { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: 0.25 }));
+    const c = m.equipos.guardianes[0].pendientes[0];
+    assert.strictEqual(c.tipo, 'camara'); assert.strictEqual(c.celda % 30, 7);
+    return c.angulo;
+  };
+  assert.notStrictEqual(angulo(0), angulo(0.99));
 });
 
-prueba('Preparación: los Guardianes colocan todo lo que planean (como mucho round(proporcion_camaras · 4) cámaras) sin reloj ni Infiltradores', () => {
+prueba('Preparación: los Guardianes planean round(proporcion_camaras · 4) cámaras y el resto sensores, sin reloj ni Infiltradores', () => {
   for (const [p, camaras] of [[0, 0], [0.5, 2], [1, 4]]) {
     const m = E.crearSimulacion(E.GENES_INFILTRADOR_POR_DEFECTO, { ...E.GENES_GUARDIAN_POR_DEFECTO, proporcion_camaras: p });
     const inf = m.equipos.infiltradores.map(i => [i.x, i.y]), gua = m.equipos.guardianes.map(g => [g.x, g.y]);
     assert.strictEqual(m.gadgets.length, 0, 'nada colocado antes de empezar');
     const planeados = m.equipos.guardianes.flatMap(g => g.pendientes);
-    assert(planeados.length >= E.GADGETS_POR_EQUIPO, 'al menos uno por hueco');
+    assert.strictEqual(planeados.filter(g => g.tipo === 'camara').length, camaras);
+    assert.strictEqual(planeados.length, camaras + E.SENSOR.porHueco * (E.GADGETS_POR_EQUIPO - camaras), 'cada hueco de sensores da porHueco');
     ticks(m, E.PREPARACION_S * 60);
     assert(m.enPreparacion && m.tiempoRestante === E.TIEMPO_RONDA_S, 'el reloj no corre');
     assert.deepStrictEqual(m.equipos.infiltradores.map(i => [i.x, i.y]), inf, 'los Infiltradores esperan');
     assert.notDeepStrictEqual(m.equipos.guardianes.map(g => [g.x, g.y]), gua, 'los Guardianes se mueven');
-    assert.strictEqual(m.gadgets.filter(g => g.tipo === 'camara').length, camaras);
-    assert.strictEqual(m.gadgets.length, planeados.length, 'llega a colocar todo lo planeado');
-    assert.strictEqual(m.inventario.guardianes, 0);
+    assert(m.gadgets.length >= 1 && m.gadgets.length <= planeados.length, 'colocan lo que les da tiempo');
     for (const c of m.gadgets.filter(g => g.tipo === 'camara')) { // solo en paredes
       const cx = Math.floor(c.x), cy = Math.floor(c.y);
       assert([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => m.mapa.altura[cx + dx + (cy + dy) * m.mapa.ancho] >= E.ALTURA.MURO), 'cámara sin pared');

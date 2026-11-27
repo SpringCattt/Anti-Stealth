@@ -61,12 +61,7 @@ function mostrarFin(m) {
   fin.hidden = false;
 }
 
-// Por dónde pasan los Infiltradores (rastros.json): los Guardianes colocan sus gadgets con ello. Sin él, rutas más cortas.
-async function cargarRastros() {
-  try { const r = await fetch('rastros.json', { cache: 'no-store' }); if (r.ok) RASTROS = await r.json(); } catch {}
-}
-
-Promise.all([cargarGenes(), cargarRastros()]).then(([{ gi, gg, origen }]) => {
+cargarGenes().then(({ gi, gg, origen }) => {
   const semilla = Number(parametros.get('semilla')) || Math.floor(Math.random() * 2 ** 32);
   const motor = new GameEngine({ headless: false, porEquipo, semilla, genesInfiltrador: gi, genesGuardian: gg });
   const render = new RenderCenital(contenedor, motor);

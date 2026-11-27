@@ -81,7 +81,7 @@ const DEVOLVER_S = 6;           // Guardián devolviendo botín a un punto B
 const RADIO_CUSTODIA = 6;         // casillas: un Guardián a <= RADIO_CUSTODIA de un punto B con botín lo está custodiando (fitness)
 const VALOR_BOTIN = 100;          // por punto B
 const BOLSA_CAPACIDAD = 35; // con 100 para ganar hacen falta 3 viajes (con 60 bastaban 2: demasiado fácil en 3 minutos)
-let BOLSA_VEL_MIN = 0.75;         // con la bolsa llena va al 75 % (lineal); con 0.5 cargar era una sentencia
+let BOLSA_VEL_MIN = 0.9;          // con la bolsa llena va al 90 % (lineal). Con 3 viajes, 0.75 los hundía (26 % de victorias; con 0.9, 41 %)
 const BOLSA_SUELTA = 0.5;         // al caer suelta el 50 % al suelo y retiene el resto en el cuerpo
 
 // --- Exterior (hierba 'g') para Guardianes ---

@@ -2,22 +2,36 @@
 // Uso: node pruebas/evolucionar.js [semilla] [generaciones] [poblacion] [rivales] [salida.json]   (0 = valor por defecto)
 // Juega las rondas en varios hilos (paralelo.js): mismo resultado que con uno, más rápido. HILOS=1 para uno solo.
 // Guarda el mejor histórico al terminar cada generación (puntos de control): si se corta a mitad, el JSON sirve igual.
-// CONTINUAR=1: arranca desde los mejores genes que ya hay en la salida (arranque en caliente) en vez de desde cero.
+// CONTINUAR=1: arranca desde los mejores genes que ya hay en la salida (arranque en caliente) en vez de desde cero, y
+// con el salón de la fama de antes (salon_fama.json, junto a la salida). El salón se guarda siempre al terminar cada generación.
+// Al final valida a los VALIDACION (5) mejores de cada bando con partidas extra y guarda el que mejor sale (VALIDACION=0 la quita).
 'use strict';
 const fs = require('fs'), path = require('path');
 const E = require('./cargar.js');
 const { coevolucionarEnParalelo } = require('./paralelo.js');
 const hilos = Number(process.env.HILOS) || undefined;
 const [semilla, generaciones, poblacion, rivales] = process.argv.slice(2, 6).map(Number);
-const opciones = { ...(semilla && { semilla }), ...(generaciones && { generaciones }), ...(poblacion && { poblacion }), ...(rivales && { rivales }) };
+const opciones = { ...(semilla && { semilla }), ...(generaciones && { generaciones }), ...(poblacion && { poblacion }), ...(rivales && { rivales }),
+  validacion: process.env.VALIDACION === undefined ? 5 : Number(process.env.VALIDACION) };
 const p = { ...E.PARAMS_GA_POR_DEFECTO, ...opciones };
 const salida = process.argv[6] || path.join(__dirname, '..', 'mejores_genes.json');
+const rutaSalon = path.join(path.dirname(salida), 'salon_fama.json');
 if (process.env.CONTINUAR === '1') {
   const previo = JSON.parse(fs.readFileSync(salida, 'utf8'));
   opciones.inicial = { infiltrador: previo.mejorInfiltrador.genes, guardian: previo.mejorGuardian.genes };
-  console.log(`Continuando desde ${salida}${previo.enCurso ? ` (punto de control, gen ${previo.generacion})` : ''}`);
+  if (fs.existsSync(rutaSalon)) opciones.salon = JSON.parse(fs.readFileSync(rutaSalon, 'utf8'));
+  console.log(`Continuando desde ${salida}${previo.enCurso ? ` (punto de control, gen ${previo.generacion})` : ''}` +
+    (opciones.salon ? `, salón de la fama con ${opciones.salon.infiltradores.length} + ${opciones.salon.guardianes.length} campeones` : ''));
 }
-console.log(`Parametros: ${JSON.stringify(p)}\nRondas a simular: ${E.contarRondas(p)}\nSalida: ${salida}`);
+// REFERENCIAS="a.json|b.json|...": campeones contra los que se valida al final (los mismos con los que se decidirá si el
+// entrenamiento sirvió, pruebas/comparar.js).
+if (process.env.REFERENCIAS) {
+  const eq = process.env.REFERENCIAS.split('|').map(r => JSON.parse(fs.readFileSync(r, 'utf8')));
+  opciones.referencias = { infiltradores: eq.map(j => j.mejorInfiltrador.genes), guardianes: eq.map(j => j.mejorGuardian.genes) };
+  console.log(`Validación final contra ${eq.length} campeones de referencia`);
+}
+const nSalon = opciones.salon ? opciones.salon.infiltradores.length + opciones.salon.guardianes.length : 0;
+console.log(`Parametros: ${JSON.stringify(p)}\nRondas a simular: ${E.contarRondas(p, nSalon)}\nSalida: ${salida}`);
 
 // Comprueba que los genes guardados están en rango (si no, el genético tiene un error).
 function validar(r) {
@@ -27,11 +41,17 @@ function validar(r) {
   }
 }
 
-function guardar(datos) {
+// Escritura atómica: nunca queda un JSON a medias.
+function escribir(ruta, datos, sangria) {
+  fs.writeFileSync(ruta + '.tmp', JSON.stringify(datos, null, sangria));
+  fs.renameSync(ruta + '.tmp', ruta);
+}
+
+// Genes en la salida; el salón va aparte (salon_fama.json): la página no lo necesita.
+function guardar({ salon, ...datos }) {
   validar(datos);
-  const tmp = salida + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(datos, null, 2));
-  fs.renameSync(tmp, salida); // escritura atómica: nunca queda un JSON a medias
+  escribir(salida, datos, 2);
+  if (salon) escribir(rutaSalon, salon);
 }
 
 (async () => {
@@ -40,7 +60,7 @@ function guardar(datos) {
     const s = (Date.now() - t0) / 1000;
     console.log(`gen ${String(g.generacion).padStart(3)} | mejor inf ${g.infiltrador.toFixed(1).padStart(7)} | mejor guard ${g.guardian.toFixed(1).padStart(7)} | rondas ${g.rondas} | ${s.toFixed(0)} s`);
     guardar({ parametros: g.parametros, enCurso: true, generacion: g.generacion, rondas: g.rondas, segundos: s,
-      mejorInfiltrador: g.mejorInfiltrador, mejorGuardian: g.mejorGuardian });
+      mejorInfiltrador: g.mejorInfiltrador, mejorGuardian: g.mejorGuardian, salon: g.salon });
   }, hilos);
   r.segundos = (Date.now() - t0) / 1000;
   guardar(r);

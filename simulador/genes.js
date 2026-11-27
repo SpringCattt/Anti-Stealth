@@ -57,6 +57,14 @@ const GENES_GUARDIAN_POR_DEFECTO = {
   sweepAngle: 3.0329117168182, patrol_bias: 0.56638302114839, investigar: 0.1805836611302346, umbral_sigilo: 6.435422698629084, umbral_correr: 0.6106336015434617, paranoia_interval: 16.51243150322974, prioridad_reanimar: 0.7975920210304168, proporcion_camaras: 0.7840160052336459, prioridad_camaras: 0.08871287750519802, radio_giro: 11.410003941225723, busqueda_s: 7.133942381093306, anticipacion: 0.5943609048020908, cortar: 0.2963752422007936, vigias: 0,
 };
 
+// Dónde coloca el Guardián cada gadget (gadgets.js, planificarGadgetsGuardianes): por posición, un punto del mapa (x, y en
+// proporción a su ancho y alto) y la orientación si es cámara.
+for (let i = 0; i < GADGETS_POR_EQUIPO * SENSOR.porHueco; i++) {
+  Object.assign(RANGOS_GUARDIAN, { [`gadget${i}_x`]: [0, 1], [`gadget${i}_y`]: [0, 1], [`gadget${i}_giro`]: [0, 1] });
+}
+// Por defecto: la colocación que tenía el genoma por defecto cuando se elegía a mano (por recorridos grabados).
+Object.assign(GENES_GUARDIAN_POR_DEFECTO, { gadget0_x: 0.39444444444444443, gadget0_y: 0.3515625, gadget0_giro: 0.16666666666666666, gadget1_x: 0.7055555555555556, gadget1_y: 0.5859375, gadget1_giro: 0.5, gadget2_x: 0.7944444444444444, gadget2_y: 0.7890625, gadget2_giro: 0.5, gadget3_x: 0.08333333333333333, gadget3_y: 0.3828125, gadget3_giro: 0.5, gadget4_x: 0.9166666666666666, gadget4_y: 0.3359375, gadget4_giro: 0.5, gadget5_x: 0.5, gadget5_y: 0.5, gadget5_giro: 0.5, gadget6_x: 0.5, gadget6_y: 0.5, gadget6_giro: 0.5, gadget7_x: 0.5, gadget7_y: 0.5, gadget7_giro: 0.5 });
+
 // Pesos de la política neuronal de cada bando (p0, p1, ...). A 0 por defecto: la red elige siempre la rutina.
 Object.assign(RANGOS_INFILTRADOR, rangosRed(ENTRADAS_INF, ACCIONES_INF.length + MODOS_RED.length));
 Object.assign(RANGOS_GUARDIAN, rangosRed(ENTRADAS_GUA, ACCIONES_GUA.length + MODOS_RED.length));
