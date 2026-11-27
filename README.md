@@ -58,20 +58,37 @@ caught by watching rounds:
 - **Guards never defended the loot.** Not because it was a bad idea, but because it simply wasn't an option they had.
   That's what pushed me to v2: I can't write every case by hand.
 - **Two bags were enough.** With a big bag, two trips won the round, and three minutes is a lot of time for two trips.
-  Now the bag is smaller and they need three, which gives the guards more chances to catch them.
+  Now the bag is smaller and they need three, which gives the guards more chances to catch them. But then carrying a
+  full bag (you went 25 % slower) hurt a lot more, because now they carry it three times: the infiltrators only won
+  about 1 round in 4. Now a full bag only makes you 10 % slower.
 - **Rewarding the wrong thing.** When I added points during the round, the first idea was to reward guards for every
   second they had an infiltrator in sight. But then the easiest way to get points is to just watch him from far away
   and never catch him. Now they only get points while they are actually close enough to stun.
 - **Two sensors on top of the loot.** Guards put their gadgets where "a lot of routes pass", and the loot point is
   where every route ends, so two sensors ended up one on top of the other, right on the loot. They warned when the
-  infiltrator was already leaving, and the second one was useless. Now guards place gadgets where they would have
-  caught the most infiltrators in recorded rounds, and a spot that only catches what another gadget already catches
-  is worth nothing.
+  infiltrator was already leaving, and the second one was useless. I tried to fix it by placing them where they would
+  have caught the most infiltrators in recorded rounds, but then I saw sensors on the doors: lots of infiltrators pass
+  there, but when they are leaving, detecting them is useless. Every rule I (or the AI that writes the code) came up
+  with had a case like that. So now nobody tells the guards where to put their gadgets: where each one goes is part of
+  their genes, and the genetic algorithm keeps the places that make them win.
 - **Twenty seconds of nothing.** Guards finished placing their gadgets in about 10 of the 20 seconds of preparation.
-  Now it's 12, and they only plan what they can actually place in time.
+  Now it's 12. If a guard picks a spot he can't reach in time, he loses that gadget, and that's something they learn too.
+- **Training more didn't add up.** Every training started from zero, so nothing was learned from the one before. When
+  I made it continue from the last one, the infiltrators went from winning 47 % to 57 % and I thought the guards had
+  gotten worse. They hadn't: putting the new teams against the old ones, the new infiltrators beat the old guards 86 %
+  of the time, and the new guards held the old infiltrators to 32 %. Both had improved, the infiltrators just a bit
+  more. The win rate tells you if the game is fair, not if the teams are getting smarter.
+- **Teams going in circles.** Each team only learns against the rival it has right now, so it can forget how to beat
+  older styles. Now there's a "hall of fame": the champion of every generation is saved, and everyone also has to play
+  against old champions. It's kept between trainings, so every training continues the last one.
+- **Rock, paper, scissors.** For a while I only checked that the new teams beat the ones from the training before.
+  After several "better" trainings in a row, I put the latest teams against older ones and they weren't better at
+  all: beating the last rival doesn't mean you beat everyone (guards went all cameras, infiltrators learned to beat
+  cameras, and so on). Now a training only counts if the new teams do at least as well against several old champions.
 
 To know if a change made things better or worse I didn't trust my eyes alone: `equilibrio.js` plays a few dozen rounds
-and gives the win rate of each team, and I tuned the rules until it was around 50/50 between trained teams.
+and gives the win rate of each team, and I tuned the rules until it was around 50/50 between trained teams. To know if
+the teams actually learned something, `comparar.js` makes the new teams play against the old ones.
 
 ## Run it
 
@@ -93,12 +110,11 @@ play with the default ones.
 ## What happens in a round
 
 - **Preparation (12 s, the clock doesn't run):** guards place their gadgets. Cameras go on walls and sweep from side to
-  side; sensors are hidden on the floor. They go where they would have caught the most infiltrators in recorded
-  rounds (`rastros.json`), only counting catches no other gadget already makes, and only where the guard gets in time.
-  How many cameras vs sensors is up to their genes.
+  side; sensors are hidden on the floor. Where each one goes, which way the cameras look and how many cameras vs
+  sensors they use is all in their genes, so it's learned by training.
 - **The round (3 minutes, +30 s after the first extraction):** infiltrators come in from the four corners of the
   garden. There are three loot points deep inside the house; they have to carry 100 to the corners to win, and a bag only holds 35,
-  so that's at least three trips. Guards win
+  so that's at least three trips (a full bag makes you 10 % slower). Guards win
   when time runs out or when all infiltrators are eliminated.
 - **Seeing and being seen:** everything is in the dark. Guards see with their flashlight (a cone that gets weaker with
   distance); infiltrators see further but with a narrow cone, and they notice any flashlight they have in sight. Walls
@@ -144,15 +160,16 @@ still there (and lose some for every second a camera stays switched off). How fa
 
 ```
 cd simulador
-node pruebas/evolucionar.js 1 40 20 2      # seed, generations, population, rivals
+node pruebas/evolucionar.js 1 40 20 2      # seed, generations, population, rivals (from zero)
+CONTINUAR=1 node pruebas/evolucionar.js 2 40 20 2   # continue from the last training and its hall of fame
+node pruebas/comparar.js new.json old.json [older.json ...]   # did they learn? new teams against old ones
 node pruebas/equilibrio.js                 # win % for each team, ~1 minute
 node pruebas/acciones.js                   # what the networks actually choose
-node pruebas/grabar_rastros.js             # record where trained infiltrators walk (guards place gadgets with it)
 ```
 
 Training plays the rounds on several CPU cores at the same time (same result as with one, just faster): a full run
-like the one above takes about 15 minutes on my PC. It writes `simulador/mejores_genes.json` after every generation, so you can stop it whenever you want; the page
-loads it next time.
+like the one above takes about 15 minutes on my PC. It writes `simulador/mejores_genes.json` after every generation,
+so you can stop it whenever you want; the page loads it next time. The hall of fame goes to `simulador/salon_fama.json`.
 
 ## What doesn't work (yet)
 
