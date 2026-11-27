@@ -24,16 +24,20 @@ class RenderCenital {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     contenedor.appendChild(this.renderer.domElement);
     this.escena = new THREE.Scene();
-    this.escena.background = new THREE.Color(0x05070a);
-    // Luz de luna: lo justo para adivinar el mapa a oscuras.
-    this.escena.add(new THREE.HemisphereLight(0x5a6c8a, 0x0a0a10, 0.18));
-    const luna = new THREE.DirectionalLight(0x8fa4c8, 0.12);
-    luna.position.set(ancho * 0.3, 40, alto * 0.2);
-    this.escena.add(luna);
+    // Luz de luna: lo justo para adivinar el mapa a oscuras. Con L se pone de día, SOLO para quien mira: la lógica del
+    // juego no cambia (los agentes siguen viendo con sus linternas y conos).
+    this.cielo = new THREE.HemisphereLight(0x5a6c8a, 0x0a0a10, 0.18);
+    this.luna = new THREE.DirectionalLight(0x8fa4c8, 0.12);
+    this.luna.position.set(ancho * 0.3, 40, alto * 0.2);
+    this.escena.add(this.cielo, this.luna);
+    this.ponerDia(false);
 
     this.crearCamara(ancho, alto);
     addEventListener('resize', () => this.ajustar());
-    addEventListener('keydown', e => { if (e.code === 'KeyV') this.verConos = !this.verConos; });
+    addEventListener('keydown', e => {
+      if (e.code === 'KeyV') this.verConos = !this.verConos;
+      if (e.code === 'KeyL') this.ponerDia(!this.dia);
+    });
     this.ajustar();
 
     // Suelo: una textura de 1 píxel por casilla. DataTexture empieza por abajo (v = 0), así que las filas van invertidas.
@@ -112,6 +116,15 @@ class RenderCenital {
       o.radio * Math.cos(o.phi),
       o.objetivo.z + o.radio * Math.sin(o.phi) * Math.cos(o.theta));
     this.camara.lookAt(o.objetivo);
+  }
+
+  // Día (dia = true) o noche: solo cambia lo que se ve, no lo que ven los agentes.
+  ponerDia(dia) {
+    this.dia = dia;
+    this.escena.background = new THREE.Color(dia ? 0x9db8d6 : 0x05070a);
+    this.cielo.intensity = dia ? 1.6 : 0.18;
+    this.luna.intensity = dia ? 1.4 : 0.12;
+    this.luna.color.set(dia ? 0xfff4e0 : 0x8fa4c8);
   }
 
   ajustar() {

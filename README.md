@@ -105,7 +105,8 @@ play with the default ones.
 
 - `?n=5` in the URL plays 5 vs 5 instead of 3 vs 3; `?semilla=123` repeats the same round.
 - Mouse: drag to rotate, right button to move, wheel to zoom.
-- Keys: space pauses, R starts a new round, V shows the vision cones the game really uses, Tab hides the info panel.
+- Keys: space pauses, R starts a new round, V shows the vision cones the game really uses, Tab hides the info panel,
+  L switches between night and day (only for you: the teams still see with their flashlights).
 
 ## What happens in a round
 

@@ -44,7 +44,7 @@ function textoHud(m, origen) {
     `Guards know: ${contactos.map(c => `#${c.id} ${c.visto ? 'SEEN' : 'last seen'}`).join(', ') || 'no contacts'} · noises ${m.pizarras.guardianes.ruidos.length}`,
     m.fitness ? `Fitness: infiltrators ${m.fitness.infiltrador.toFixed(0)} · guards ${m.fitness.guardian.toFixed(0)}` : `Genes: ${origen} · ${porEquipo} vs ${porEquipo}`,
     'S/W/R = sneak/walk/run · z knocked out · x out · space pause · R new round · Tab hide panel',
-    'Mouse: drag to rotate · right button to pan · wheel to zoom · V vision cones',
+    'Mouse: drag to rotate · right button to pan · wheel to zoom · V vision cones · L day/night (view only)',
   ].join('\n');
 }
 
